@@ -1,90 +1,145 @@
-# QR 코드 커미션 시스템
+# 라즈베리 카메라3 QR코드 커미션 시스템
 
-QR 코드를 스캔하여 서버 정보를 추출하고 커미션 요청을 보내는 프로그램입니다.
+라즈베리 카메라3를 사용하여 QR코드를 실시간으로 인식하고, QR코드에 담긴 서버 정보를 통해 API를 호출하는 시스템입니다.
 
 ## 기능
 
-1. **QR 코드 스캔**: 이미지 파일에서 QR 코드를 스캔
-2. **서버 정보 파싱**: QR 코드에서 서버 IP, 포트, 키 정보 추출
-3. **API 요청**: 추출된 정보를 바탕으로 서버에 커미션 요청 전송
+- 실시간 QR코드 인식
+- JSON 형태의 서버 정보 파싱 (예: `{"ip":"192.168.0.164","port":8080}`)
+- 자동 API 호출 (커미션 요청)
+- 중복 인식 방지 (3초 쿨다운)
+- 시각적 피드백 (QR코드 영역 표시)
 
-## 설치 방법
+## 요구사항
 
-1. 필요한 패키지 설치:
+### 하드웨어
+- 라즈베리파이 (3B+ 이상 권장)
+- 라즈베리 카메라3
+
+### 소프트웨어
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Windows에서 pyzbar 사용을 위해 추가 설치:
+## 설치 및 설정
+
+### 1. 라즈베리파이 카메라 활성화
+
 ```bash
-# zbar 라이브러리 설치 (Windows)
-# https://github.com/NaturalHistoryMuseum/pyzbar 에서 zbar 다운로드
+# 카메라 활성화
+sudo raspi-config
+# Interface Options -> Camera -> Enable
+
+# 또는 명령어로 활성화
+sudo raspi-config nonint do_camera 0
+
+# 시스템 재부팅
+sudo reboot
 ```
 
-## 사용 방법
+### 2. 카메라 테스트
 
-### 테스트 서버 실행 (선택사항)
-테스트를 위해 로컬 서버를 실행할 수 있습니다:
 ```bash
-python test_server.py
+# 카메라 설정 확인
+python camera_setup.py
+
+# 또는 간단한 테스트
+vcgencmd get_camera
 ```
 
-### 메인 프로그램 실행
-1. QR 코드 이미지 파일을 프로그램과 같은 디렉토리에 넣으세요
-2. 프로그램 실행:
+### 3. 의존성 설치
+
 ```bash
-python main.py
+# 시스템 패키지 설치
+sudo apt-get update
+sudo apt-get install -y python3-opencv python3-pip libzbar0
+
+# Python 패키지 설치
+pip3 install -r requirements.txt
 ```
 
-3. 목록에서 스캔할 이미지 파일을 선택하세요
-4. QR 코드가 인식되면 자동으로 서버에 요청이 전송됩니다
+## 사용법
 
-### 테스트용 QR 코드 생성
+### 기본 실행
+
 ```bash
-python generate_test_qr.py
+python3 main.py
 ```
 
-## QR 코드 형식
+### QR코드 형식
 
-다음 두 가지 형식을 지원합니다:
+QR코드에는 다음과 같은 JSON 형태의 서버 정보가 포함되어야 합니다:
 
-### JSON 형식
 ```json
 {
-  "ip": "192.168.1.100",
-  "port": "8080",
-  "key": "your_secret_key"
+  "ip": "192.168.0.164",
+  "port": 8080
 }
 ```
 
-### 간단한 형식
+### 동작 과정
+
+1. **카메라 초기화**: 라즈베리 카메라3를 초기화합니다.
+2. **실시간 스캔**: 카메라 화면에서 QR코드를 실시간으로 감지합니다.
+3. **QR코드 인식**: QR코드가 감지되면 JSON 데이터를 파싱합니다.
+4. **API 호출**: 서버 정보를 기반으로 커미션 API를 호출합니다.
+5. **결과 표시**: API 호출 결과를 콘솔에 출력합니다.
+
+### API 엔드포인트
+
+시스템은 다음 URL로 POST 요청을 보냅니다:
 ```
-192.168.1.100:8080:your_secret_key
+http://{ip}:{port}/commission
 ```
 
-## API 요청 형식
-
-프로그램은 다음 형식으로 서버에 POST 요청을 보냅니다:
-
-```
-POST http://{server_ip}:{server_port}/commission
-Content-Type: application/json
-
+요청 본문:
+```json
 {
   "client_ip": "클라이언트_IP_주소"
 }
 ```
 
-## 테스트 서버 기능
+## 제어
 
-테스트 서버는 다음 엔드포인트를 제공합니다:
-- `GET /`: 서버 상태 확인
-- `POST /commission`: 커미션 요청 처리
-- `GET /requests`: 받은 요청 기록 확인
-- `POST /clear`: 요청 기록 초기화
+- **'q' 키**: 프로그램 종료
+- **Ctrl+C**: 프로그램 강제 종료
 
-## 주의사항
+## 문제 해결
 
-- 지원하는 이미지 형식: .png, .jpg, .jpeg, .bmp, .tiff
-- 인터넷 연결이 필요합니다 (클라이언트 IP 확인용)
-- QR 코드에 서버 정보가 올바르게 인코딩되어 있어야 합니다
+### 카메라가 인식되지 않는 경우
+
+1. 카메라 연결 확인
+2. 카메라 활성화 상태 확인
+3. 시스템 재부팅
+4. `camera_setup.py` 실행하여 진단
+
+### QR코드 인식이 안 되는 경우
+
+1. QR코드가 명확하게 보이는지 확인
+2. 조명 상태 확인
+3. 카메라와 QR코드 사이 거리 조정
+4. QR코드 크기 확인
+
+### API 호출 실패
+
+1. 네트워크 연결 확인
+2. 서버 IP/포트 확인
+3. 서버가 실행 중인지 확인
+4. 방화벽 설정 확인
+
+## 파일 구조
+
+```
+├── main.py              # 메인 QR코드 스캔 프로그램
+├── camera_setup.py      # 카메라 설정 및 테스트 도구
+├── requirements.txt     # Python 의존성
+└── README.md           # 이 파일
+```
+
+## 개발자 정보
+
+이 시스템은 라즈베리파이 환경에서 QR코드를 통한 자동 커미션을 위해 개발되었습니다.
+
+## 라이선스
+
+MIT License
