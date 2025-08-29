@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+"""
+라즈베리 카메라3 QR코드 커미션 시스템 (GUI 버전)
+GUI 환경이 있는 경우 카메라 화면을 표시합니다.
+"""
+
 import cv2
 import requests
 import json
@@ -88,8 +94,8 @@ def send_commission_request(server_info):
         return False
 
 def scan_qr_with_camera():
-    """라즈베리 카메라3를 사용하여 실시간 QR 코드 스캔 (picamera2 사용, GUI 없음)"""
-    print("라즈베리 카메라3를 초기화 중... (picamera2 사용)")
+    """라즈베리 카메라3를 사용하여 실시간 QR 코드 스캔 (GUI 버전)"""
+    print("라즈베리 카메라3를 초기화 중... (GUI 버전)")
     
     # Picamera2 초기화
     picam2 = Picamera2()
@@ -109,8 +115,7 @@ def scan_qr_with_camera():
         print(f"카메라 해상도: 640x480")
         print(f"FPS: 30")
         
-        print("\nQR 코드를 카메라에 보여주세요. Ctrl+C를 누르면 종료됩니다.")
-        print("카메라 화면은 표시되지 않지만 QR 코드 인식은 계속됩니다.")
+        print("\nQR 코드를 카메라에 보여주세요. 'q'를 누르면 종료됩니다.")
         
         last_qr_data = None
         qr_detection_time = 0
@@ -144,6 +149,20 @@ def scan_qr_with_camera():
                         
                         print(f"\n🎯 QR 코드 감지됨: {qr_data}")
                         
+                        # QR 코드 영역에 박스 그리기
+                        points = obj.polygon
+                        if len(points) > 4:
+                            hull = cv2.convexHull(np.array([point for point in points], dtype=np.float32))
+                            points = hull
+                        
+                        n = len(points)
+                        for j in range(n):
+                            cv2.line(frame, tuple(points[j]), tuple(points[(j+1) % n]), (0, 255, 0), 3)
+                        
+                        # QR 코드 데이터 표시
+                        cv2.putText(frame, qr_data, (obj.rect.left, obj.rect.top - 10),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        
                         # 서버 정보 파싱 및 API 호출
                         server_info = parse_server_info(qr_data)
                         if server_info:
@@ -161,9 +180,19 @@ def scan_qr_with_camera():
                         last_qr_data = qr_data
                         qr_detection_time = current_time
                 
-                # 100프레임마다 상태 출력
-                if frame_count % 100 == 0:
-                    print(f"📹 프레임 처리 중... (프레임 {frame_count})")
+                # 화면에 안내 텍스트 표시
+                cv2.putText(frame, "QR Code Scanner - Press 'q' to quit", 
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame, f"Frame: {frame_count}", 
+                           (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                # 프레임 표시
+                cv2.imshow('QR Code Scanner', frame)
+                
+                # 'q' 키를 누르면 종료
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    print("\n사용자가 'q' 키를 눌러 종료합니다.")
+                    break
                     
         except KeyboardInterrupt:
             print("\n프로그램이 중단되었습니다.")
@@ -174,6 +203,7 @@ def scan_qr_with_camera():
         finally:
             picam2.stop()
             picam2.close()
+            cv2.destroyAllWindows()
             print("카메라가 종료되었습니다.")
             
     except Exception as e:
@@ -189,7 +219,7 @@ def scan_qr_with_camera():
         try_alternative_opencv()
 
 def try_alternative_opencv():
-    """OpenCV를 사용한 대안 카메라 접근 (GUI 없음)"""
+    """OpenCV를 사용한 대안 카메라 접근 (GUI 버전)"""
     print("OpenCV 카메라 시도 중...")
     
     cap = cv2.VideoCapture(0)
@@ -208,8 +238,7 @@ def try_alternative_opencv():
     fps = cap.get(cv2.CAP_PROP_FPS)
     print(f"카메라 해상도: {width}x{height}, FPS: {fps}")
     
-    print("\nQR 코드를 카메라에 보여주세요. Ctrl+C를 누르면 종료됩니다.")
-    print("카메라 화면은 표시되지 않지만 QR 코드 인식은 계속됩니다.")
+    print("\nQR 코드를 카메라에 보여주세요. 'q'를 누르면 종료됩니다.")
     
     last_qr_data = None
     qr_detection_time = 0
@@ -241,6 +270,20 @@ def try_alternative_opencv():
                     
                     print(f"\n🎯 QR 코드 감지됨: {qr_data}")
                     
+                    # QR 코드 영역에 박스 그리기
+                    points = obj.polygon
+                    if len(points) > 4:
+                        hull = cv2.convexHull(np.array([point for point in points], dtype=np.float32))
+                        points = hull
+                    
+                    n = len(points)
+                    for j in range(n):
+                        cv2.line(frame, tuple(points[j]), tuple(points[(j+1) % n]), (0, 255, 0), 3)
+                    
+                    # QR 코드 데이터 표시
+                    cv2.putText(frame, qr_data, (obj.rect.left, obj.rect.top - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    
                     # 서버 정보 파싱 및 API 호출
                     server_info = parse_server_info(qr_data)
                     if server_info:
@@ -258,9 +301,19 @@ def try_alternative_opencv():
                     last_qr_data = qr_data
                     qr_detection_time = current_time
             
-            # 100프레임마다 상태 출력
-            if frame_count % 100 == 0:
-                print(f"📹 프레임 처리 중... (프레임 {frame_count})")
+            # 화면에 안내 텍스트 표시
+            cv2.putText(frame, "QR Code Scanner (OpenCV) - Press 'q' to quit", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame, f"Frame: {frame_count}", 
+                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+            # 프레임 표시
+            cv2.imshow('QR Code Scanner (OpenCV)', frame)
+            
+            # 'q' 키를 누르면 종료
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("\n사용자가 'q' 키를 눌러 종료합니다.")
+                break
                 
     except KeyboardInterrupt:
         print("\n프로그램이 중단되었습니다.")
@@ -270,14 +323,14 @@ def try_alternative_opencv():
         traceback.print_exc()
     finally:
         cap.release()
+        cv2.destroyAllWindows()
         print("카메라가 종료되었습니다.")
 
 def main():
     """메인 함수"""
-    print("=== 라즈베리 카메라3 QR 코드 커미션 시스템 ===")
+    print("=== 라즈베리 카메라3 QR 코드 커미션 시스템 (GUI 버전) ===")
     print("QR 코드 형식 예시: {\"ip\":\"192.168.0.164\",\"port\":8080}")
-    print("⚠️  GUI 환경이 없으므로 카메라 화면은 표시되지 않습니다.")
-    print("QR 코드 인식은 백그라운드에서 계속 진행됩니다.")
+    print("🖥️  GUI 환경에서 카메라 화면이 표시됩니다.")
     
     # 실시간 QR 코드 스캔 시작
     scan_qr_with_camera()
