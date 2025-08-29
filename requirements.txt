@@ -4,3 +4,4 @@ pyzbar==0.1.9
 numpy==1.24.3
 qrcode[pil]==7.4.2
 flask==2.3.3
+picamera2
