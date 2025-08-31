@@ -169,7 +169,7 @@ def detect_qr_codes_enhanced(frame):
 
 def camera_stream():
     """카메라 스트리밍 함수 - CM5 + IO 보드 최적화 + QR 인식 향상"""
-    global camera_frame, qr_detection_results, last_qr_data, qr_detection_time
+    global camera_frame, qr_detection_results, last_qr_data, qr_detection_time, camera_active
     
     print("카메라 스트리밍을 시작합니다...")
     print("CM5 + IO 보드 환경에서 Pi Camera 3를 초기화합니다...")
@@ -186,14 +186,14 @@ def camera_stream():
         
         # CM5 + IO 보드에 최적화된 설정 + QR 인식 향상
         config = picam2.create_preview_configuration(
-            main={"size": (1920, 1080), "format": "RGB888"},  # 고해상도로 변경
+            main={"size": (1280, 720), "format": "RGB888"},  # 해상도를 낮춰서 성능 향상
             controls={
-                "FrameRate": 30,
+                "FrameRate": 20,  # FPS를 낮춰서 안정성 향상
                 "AfMode": "Continuous",  # 자동 초점 모드
                 "AfRange": "Normal",
                 "AfSpeed": "Normal",
-                "Sharpness": 2.0,  # 선명도 향상
-                "Contrast": 1.2,   # 대비 향상
+                "Sharpness": 1.5,  # 선명도 향상 (값을 낮춤)
+                "Contrast": 1.1,   # 대비 향상 (값을 낮춤)
                 "NoiseReductionMode": "HighQuality"
             },
             buffer_count=4
@@ -205,15 +205,18 @@ def camera_stream():
         print("카메라 시작 중...")
         picam2.start()
         
-        # 자동 초점 활성화
+        # 자동 초점 활성화 (에러 처리 강화)
         try:
             picam2.set_controls({"AfMode": "Continuous"})
             print("✅ 자동 초점이 활성화되었습니다.")
         except Exception as e:
             print(f"⚠️  자동 초점 설정 실패: {e}")
+            print("자동 초점 없이 계속 진행합니다.")
         
         # 초기 프레임으로 카메라 상태 확인
         print("초기 프레임 캡처 테스트...")
+        time.sleep(2)  # 카메라 안정화를 위한 대기
+        
         test_frame = picam2.capture_array()
         if test_frame is not None:
             print(f"✅ Picamera2 초기화 성공! 프레임 크기: {test_frame.shape}")
@@ -247,6 +250,18 @@ def camera_stream():
                 cap = cv2.VideoCapture(device_index)
                 
                 if cap.isOpened():
+                    # 안정적인 해상도 설정
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                    cap.set(cv2.CAP_PROP_FPS, 20)
+                    
+                    # 자동 초점 설정 (에러 처리 강화)
+                    try:
+                        cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+                        print("✅ OpenCV 자동 초점 활성화")
+                    except Exception as e:
+                        print(f"⚠️  OpenCV 자동 초점 설정 실패: {e}")
+                    
                     # 카메라 정보 확인
                     width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
                     height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
@@ -297,14 +312,20 @@ def camera_stream():
                         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                     else:
                         print("❌ Picamera2에서 프레임을 읽을 수 없습니다.")
+                        time.sleep(0.1)
                         continue
                 else:
                     ret, frame = cap.read()
                     if not ret or frame is None:
                         print("❌ OpenCV에서 프레임을 읽을 수 없습니다.")
+                        time.sleep(0.1)
                         continue
                 
                 frame_count += 1
+                
+                # 프레임 크기 조정 (웹 스트리밍 최적화)
+                if frame.shape[0] > 720 or frame.shape[1] > 1280:
+                    frame = cv2.resize(frame, (1280, 720))
                 
                 # 향상된 QR 코드 디코딩
                 qr_results = detect_qr_codes_enhanced(frame)
@@ -393,7 +414,7 @@ def camera_stream():
                     qr_detection_results = qr_detection_results[-10:]
                 
                 # 웹 스트리밍을 위해 약간의 지연
-                time.sleep(0.1)
+                time.sleep(0.05)  # 지연 시간을 줄여서 성능 향상
                 
             except Exception as e:
                 print(f"프레임 처리 오류: {e}")
@@ -435,40 +456,87 @@ def index():
 
 @app.route('/video_feed')
 def video_feed():
-    """비디오 스트림 (MJPEG)"""
+    """비디오 스트림 (MJPEG) - 성능 최적화"""
     def generate():
+        last_frame = None
         while True:
-            if camera_frame is not None:
-                # JPEG로 인코딩
-                _, buffer = cv2.imencode('.jpg', camera_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if camera_frame is not None and camera_active:
+                # 프레임이 변경되었을 때만 인코딩
+                if last_frame is not camera_frame:
+                    try:
+                        # JPEG 품질을 낮춰서 성능 향상
+                        _, buffer = cv2.imencode('.jpg', camera_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                        frame_bytes = buffer.tobytes()
+                        last_frame = camera_frame
+                        
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                    except Exception as e:
+                        print(f"프레임 인코딩 오류: {e}")
+                        time.sleep(0.1)
+                        continue
+                else:
+                    time.sleep(0.05)  # 프레임이 변경되지 않았을 때는 짧게 대기
+            else:
+                # 카메라가 없을 때는 기본 이미지 표시
+                default_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(default_frame, "Camera not available", (200, 240), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                
+                _, buffer = cv2.imencode('.jpg', default_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
                 frame_bytes = buffer.tobytes()
+                
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            time.sleep(0.1)
+                time.sleep(1)  # 기본 이미지는 1초마다 업데이트
     
     return Response(generate(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/get_frame')
 def get_frame():
-    """현재 프레임을 base64로 반환 (AJAX용)"""
-    frame_base64 = get_frame_base64()
+    """현재 프레임을 base64로 반환 (AJAX용) - 성능 최적화"""
+    global camera_frame
+    
+    if camera_frame is None or not camera_active:
+        # 카메라가 없을 때는 기본 이미지 반환
+        default_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(default_frame, "Camera not available", (200, 240), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        
+        _, buffer = cv2.imencode('.jpg', default_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+        frame_base64 = base64.b64encode(buffer).decode('utf-8')
+    else:
+        # JPEG 품질을 낮춰서 성능 향상
+        _, buffer = cv2.imencode('.jpg', camera_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+        frame_base64 = base64.b64encode(buffer).decode('utf-8')
+    
     return jsonify({
         'frame': frame_base64,
         'qr_results': qr_detection_results,
-        'camera_active': camera_active
+        'camera_active': camera_active,
+        'timestamp': time.time()
     })
 
 @app.route('/start_camera')
 def start_camera():
     """카메라 시작"""
     global camera_active
+    print(f"카메라 시작 요청 - 현재 상태: {camera_active}")
+    
     if not camera_active:
-        camera_thread = threading.Thread(target=camera_stream, daemon=True)
-        camera_thread.start()
-        camera_active = True
-        return jsonify({'status': 'success', 'message': '카메라가 시작되었습니다.'})
+        try:
+            camera_thread = threading.Thread(target=camera_stream, daemon=True)
+            camera_thread.start()
+            camera_active = True
+            print("✅ 카메라 스레드가 시작되었습니다.")
+            return jsonify({'status': 'success', 'message': '카메라가 시작되었습니다.'})
+        except Exception as e:
+            print(f"❌ 카메라 시작 실패: {e}")
+            camera_active = False
+            return jsonify({'status': 'error', 'message': f'카메라 시작 실패: {e}'})
     else:
+        print("⚠️  카메라가 이미 실행 중입니다.")
         return jsonify({'status': 'info', 'message': '카메라가 이미 실행 중입니다.'})
 
 @app.route('/stop_camera')
