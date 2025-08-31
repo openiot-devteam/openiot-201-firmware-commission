@@ -91,6 +91,16 @@ def scan_qr_with_camera():
     """라즈베리 카메라3를 사용하여 실시간 QR 코드 스캔 (picamera2 사용, GUI 포함)"""
     print("라즈베리 카메라3를 초기화 중... (picamera2 사용)")
     
+    # GUI 환경 확인
+    import os
+    display = os.environ.get('DISPLAY')
+    if not display:
+        print("⚠️  GUI 환경이 감지되지 않습니다. SSH나 터미널에서 실행 중일 수 있습니다.")
+        print("카메라 화면을 보려면 다음 중 하나를 시도하세요:")
+        print("1. VNC나 원격 데스크톱으로 연결")
+        print("2. 직접 라즈베리파이에 모니터 연결")
+        print("3. X11 포워딩 사용 (ssh -X)")
+    
     # Picamera2 초기화
     picam2 = Picamera2()
     
@@ -116,6 +126,11 @@ def scan_qr_with_camera():
         qr_detection_time = 0
         cooldown_period = 3  # 3초 쿨다운
         frame_count = 0
+        
+        # OpenCV 창 설정
+        window_name = 'Raspberry Camera - QR Code Scanner'
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 800, 600)
         
         try:
             while True:
@@ -191,7 +206,14 @@ def scan_qr_with_camera():
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 
                 # 화면에 표시
-                cv2.imshow('Raspberry Camera - QR Code Scanner', frame_bgr)
+                try:
+                    cv2.imshow(window_name, frame_bgr)
+                    # 창이 제대로 표시되었는지 확인
+                    if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                        print("⚠️  카메라 창이 표시되지 않습니다. GUI 환경을 확인하세요.")
+                except Exception as e:
+                    print(f"⚠️  화면 표시 오류: {e}")
+                    print("터미널에서만 실행 중입니다. QR 코드 인식은 계속됩니다.")
                 
                 # 'q' 키를 누르면 종료
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -225,6 +247,16 @@ def try_alternative_opencv():
     """OpenCV를 사용한 대안 카메라 접근 (GUI 포함)"""
     print("OpenCV 카메라 시도 중...")
     
+    # GUI 환경 확인
+    import os
+    display = os.environ.get('DISPLAY')
+    if not display:
+        print("⚠️  GUI 환경이 감지되지 않습니다. SSH나 터미널에서 실행 중일 수 있습니다.")
+        print("카메라 화면을 보려면 다음 중 하나를 시도하세요:")
+        print("1. VNC나 원격 데스크톱으로 연결")
+        print("2. 직접 라즈베리파이에 모니터 연결")
+        print("3. X11 포워딩 사용 (ssh -X)")
+    
     cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():
@@ -248,6 +280,11 @@ def try_alternative_opencv():
     qr_detection_time = 0
     cooldown_period = 3
     frame_count = 0
+    
+    # OpenCV 창 설정
+    window_name = 'OpenCV Camera - QR Code Scanner'
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, 800, 600)
     
     try:
         while True:
@@ -318,7 +355,14 @@ def try_alternative_opencv():
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             # 화면에 표시
-            cv2.imshow('OpenCV Camera - QR Code Scanner', frame)
+            try:
+                cv2.imshow(window_name, frame)
+                # 창이 제대로 표시되었는지 확인
+                if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    print("⚠️  카메라 창이 표시되지 않습니다. GUI 환경을 확인하세요.")
+            except Exception as e:
+                print(f"⚠️  화면 표시 오류: {e}")
+                print("터미널에서만 실행 중입니다. QR 코드 인식은 계속됩니다.")
             
             # 'q' 키를 누르면 종료
             if cv2.waitKey(1) & 0xFF == ord('q'):
