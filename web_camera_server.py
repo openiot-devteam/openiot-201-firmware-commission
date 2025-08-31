@@ -108,49 +108,124 @@ def send_commission_request(server_info):
         return False
 
 def camera_stream():
-    """카메라 스트리밍 함수"""
+    """카메라 스트리밍 함수 - CM5 + IO 보드 최적화"""
     global camera_frame, qr_detection_results, last_qr_data, qr_detection_time
     
     print("카메라 스트리밍을 시작합니다...")
+    print("CM5 + IO 보드 환경에서 Pi Camera 3를 초기화합니다...")
     
-    # Picamera2 초기화 시도
+    camera_type = None
+    picam2 = None
+    cap = None
+    
+    # 1단계: Picamera2 시도 (Pi Camera 3 전용)
     try:
+        print("1단계: Picamera2 초기화 시도 중...")
         picam2 = Picamera2()
+        
+        # CM5 + IO 보드에 최적화된 설정
         config = picam2.create_preview_configuration(
             main={"size": (640, 480), "format": "RGB888"},
-            controls={"FrameRate": 15}  # 웹 스트리밍을 위해 FPS 낮춤
+            controls={"FrameRate": 15},  # 웹 스트리밍을 위해 FPS 낮춤
+            buffer_count=4  # 버퍼 개수 증가
         )
-        picam2.configure(config)
-        picam2.start()
-        print("✅ Picamera2가 성공적으로 시작되었습니다!")
-        camera_type = "Picamera2"
         
+        print("카메라 설정 적용 중...")
+        picam2.configure(config)
+        
+        print("카메라 시작 중...")
+        picam2.start()
+        
+        # 초기 프레임으로 카메라 상태 확인
+        print("초기 프레임 캡처 테스트...")
+        test_frame = picam2.capture_array()
+        if test_frame is not None:
+            print(f"✅ Picamera2 초기화 성공! 프레임 크기: {test_frame.shape}")
+            camera_type = "Picamera2"
+        else:
+            print("❌ 초기 프레임 캡처 실패")
+            raise Exception("초기 프레임 캡처 실패")
+            
     except Exception as e:
         print(f"Picamera2 초기화 실패: {e}")
-        print("OpenCV로 대안 시도 중...")
+        print("2단계: OpenCV로 대안 시도 중...")
         
-        # OpenCV로 대안 시도
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            print("❌ OpenCV로도 카메라를 열 수 없습니다.")
+        # 2단계: OpenCV 시도
+        try:
+            # CM5 + IO 보드에서 사용 가능한 카메라 장치 찾기
+            camera_devices = []
+            for i in range(5):  # video0부터 video4까지 시도
+                if os.path.exists(f'/dev/video{i}'):
+                    camera_devices.append(i)
+            
+            print(f"발견된 비디오 장치: {camera_devices}")
+            
+            if not camera_devices:
+                print("❌ 사용 가능한 비디오 장치가 없습니다.")
+                print("CM5 + IO 보드 설정을 확인하세요.")
+                return
+            
+            # 각 장치로 카메라 열기 시도
+            for device_index in camera_devices:
+                print(f"비디오 장치 {device_index}로 카메라 열기 시도...")
+                cap = cv2.VideoCapture(device_index)
+                
+                if cap.isOpened():
+                    # 카메라 정보 확인
+                    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    
+                    print(f"✅ OpenCV 카메라가 열렸습니다! (장치: {device_index})")
+                    print(f"  해상도: {width}x{height}, FPS: {fps}")
+                    
+                    # 테스트 프레임 읽기
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        print(f"  테스트 프레임 성공: {test_frame.shape}")
+                        camera_type = "OpenCV"
+                        break
+                    else:
+                        print(f"  테스트 프레임 실패")
+                        cap.release()
+                        cap = None
+                else:
+                    print(f"  장치 {device_index} 열기 실패")
+                    if cap:
+                        cap.release()
+                        cap = None
+            
+            if not camera_type:
+                print("❌ 모든 비디오 장치에서 카메라를 열 수 없습니다.")
+                return
+                
+        except Exception as e:
+            print(f"OpenCV 카메라 초기화 실패: {e}")
             return
-        
-        print("✅ OpenCV 카메라가 열렸습니다!")
-        camera_type = "OpenCV"
     
+    if not camera_type:
+        print("❌ 카메라를 초기화할 수 없습니다.")
+        return
+    
+    print(f"✅ {camera_type} 카메라가 성공적으로 시작되었습니다!")
     camera_active = True
     frame_count = 0
     
     try:
         while camera_active:
             try:
+                # 프레임 캡처
                 if camera_type == "Picamera2":
                     frame = picam2.capture_array()
                     if frame is not None:
                         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    else:
+                        print("❌ Picamera2에서 프레임을 읽을 수 없습니다.")
+                        continue
                 else:
                     ret, frame = cap.read()
-                    if not ret:
+                    if not ret or frame is None:
+                        print("❌ OpenCV에서 프레임을 읽을 수 없습니다.")
                         continue
                 
                 frame_count += 1
@@ -213,9 +288,18 @@ def camera_stream():
                 cv2.putText(frame, status_text, (10, 30), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
-                # 카메라 타입 표시
-                cv2.putText(frame, f"Camera: {camera_type}", (10, 60), 
+                # 카메라 타입과 장치 정보 표시
+                camera_info = f"Camera: {camera_type}"
+                if camera_type == "OpenCV" and cap:
+                    device_index = int(cap.get(cv2.CAP_PROP_POS_FRAMES) if cap.get(cv2.CAP_PROP_POS_FRAMES) >= 0 else 0)
+                    camera_info += f" (Device: {device_index})"
+                
+                cv2.putText(frame, camera_info, (10, 60), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                
+                # CM5 + IO 보드 정보 표시
+                cv2.putText(frame, "CM5 + IO Board", (10, 90), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
                 
                 # 전역 변수 업데이트
                 camera_frame = frame.copy()
@@ -237,10 +321,10 @@ def camera_stream():
         print(f"카메라 스트리밍 오류: {e}")
     finally:
         camera_active = False
-        if camera_type == "Picamera2":
+        if camera_type == "Picamera2" and picam2:
             picam2.stop()
             picam2.close()
-        else:
+        elif camera_type == "OpenCV" and cap:
             cap.release()
         print("카메라가 종료되었습니다.")
 
