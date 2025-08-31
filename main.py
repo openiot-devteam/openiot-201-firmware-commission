@@ -90,6 +90,7 @@ def send_commission_request(server_info):
 def scan_qr_with_camera():
     """라즈베리 카메라3를 사용하여 실시간 QR 코드 스캔 (picamera2 사용, GUI 포함)"""
     print("라즈베리 카메라3를 초기화 중... (picamera2 사용)")
+    print("CM5 + IO 보드 환경에서 Pi Camera 3를 초기화합니다...")
     
     # GUI 환경 확인
     import os
@@ -101,23 +102,36 @@ def scan_qr_with_camera():
         print("2. 직접 라즈베리파이에 모니터 연결")
         print("3. X11 포워딩 사용 (ssh -X)")
     
-    # Picamera2 초기화
+    # Picamera2 초기화 - 제공된 코드와 동일한 방식
     picam2 = Picamera2()
     
-    # 카메라 설정
-    config = picam2.create_preview_configuration(
-        main={"size": (640, 480), "format": "RGB888"},
-        controls={"FrameRate": 30}
+    # 제공된 코드와 동일한 방식으로 설정
+    cfg = picam2.create_video_configuration(
+        main={'size': (1280, 720), 'format': 'RGB888'}
     )
     
     try:
-        picam2.configure(config)
+        print("카메라 설정 적용 중...")
+        picam2.configure(cfg)
+        
+        print("카메라 시작 중...")
         picam2.start()
+        
+        # 자동 초점 설정 (제공된 코드와 동일)
+        picam2.set_controls({"FrameRate": 20})
+        picam2.set_controls({"AfMode": 2})  # 0=Manual, 1=Auto, 2=Continuous
+        
+        print("✅ 자동 초점이 활성화되었습니다.")
+        
+        # 카메라 안정화를 위한 대기
+        print("카메라 안정화 대기 중...")
+        time.sleep(2)
+        
         print("✅ Picamera2가 성공적으로 시작되었습니다!")
         
         # 카메라 정보 출력
-        print(f"카메라 해상도: 640x480")
-        print(f"FPS: 30")
+        print(f"카메라 해상도: 1280x720")
+        print(f"FPS: 20")
         
         print("\nQR 코드를 카메라에 보여주세요. 'q'를 누르면 종료됩니다.")
         print("카메라 화면이 실시간으로 표시됩니다.")
@@ -244,8 +258,9 @@ def scan_qr_with_camera():
         try_alternative_opencv()
 
 def try_alternative_opencv():
-    """OpenCV를 사용한 대안 카메라 접근 (GUI 포함)"""
+    """OpenCV를 사용한 대안 카메라 접근 (GUI 포함) - 제공된 코드 방식 참고"""
     print("OpenCV 카메라 시도 중...")
+    print("CM5 + IO 보드에서 사용 가능한 카메라 장치를 찾는 중...")
     
     # GUI 환경 확인
     import os
@@ -257,21 +272,81 @@ def try_alternative_opencv():
         print("2. 직접 라즈베리파이에 모니터 연결")
         print("3. X11 포워딩 사용 (ssh -X)")
     
-    cap = cv2.VideoCapture(0)
+    # CM5 + IO 보드에서 사용 가능한 카메라 장치 찾기
+    camera_devices = []
+    for i in range(5):  # video0부터 video4까지 시도
+        if os.path.exists(f'/dev/video{i}'):
+            camera_devices.append(i)
     
-    if not cap.isOpened():
-        print("❌ OpenCV로도 카메라를 열 수 없습니다.")
-        print("카메라 설정을 확인하려면 'python3 camera_setup.py'를 실행하세요.")
+    print(f"발견된 비디오 장치: {camera_devices}")
+    
+    if not camera_devices:
+        print("❌ 사용 가능한 비디오 장치가 없습니다.")
+        print("CM5 + IO 보드 설정을 확인하세요.")
         input("계속하려면 Enter를 누르세요...")
         return None
     
-    print("✅ OpenCV 카메라가 열렸습니다!")
+    # 각 장치로 카메라 열기 시도
+    cap = None
+    for device_index in camera_devices:
+        print(f"비디오 장치 {device_index}로 카메라 열기 시도...")
+        cap = cv2.VideoCapture(device_index)
+        
+        if cap.isOpened():
+            # 제공된 코드와 동일한 방식으로 설정
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
+            # 안정적인 해상도 설정
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 20)
+            
+            # 설정 적용을 위한 대기
+            time.sleep(1)
+            
+            # 자동 초점 설정
+            try:
+                cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+                print("✅ OpenCV 자동 초점 활성화")
+            except Exception as e:
+                print(f"⚠️  OpenCV 자동 초점 설정 실패: {e}")
+            
+            # 카메라 정보 확인
+            width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            
+            print(f"✅ OpenCV 카메라가 열렸습니다! (장치: {device_index})")
+            print(f"  해상도: {width}x{height}, FPS: {fps}")
+            
+            # 제공된 코드와 동일한 방식으로 프레임 읽기 테스트
+            print("테스트 프레임 읽기 시작...")
+            ret, test_frame = cap.read()
+            if ret and test_frame is not None:
+                print(f"✅ 테스트 프레임 성공: {test_frame.shape}")
+                break
+            else:
+                print("❌ 테스트 프레임 실패")
+                cap.release()
+                cap = None
+        else:
+            print(f"  장치 {device_index} 열기 실패")
+            if cap:
+                cap.release()
+                cap = None
     
-    # 카메라 정보 출력
-    width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-    height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    print(f"카메라 해상도: {width}x{height}, FPS: {fps}")
+    if not cap:
+        print("❌ 모든 비디오 장치에서 카메라를 열 수 없습니다.")
+        print("\n💡 문제 해결 방법:")
+        print("1. 카메라 하드웨어 연결 확인")
+        print("2. sudo apt-get install v4l-utils")
+        print("3. v4l2-ctl --list-devices 실행")
+        print("4. sudo chmod 666 /dev/video*")
+        print("5. 시스템 재부팅")
+        input("계속하려면 Enter를 누르세요...")
+        return None
+    
+    print("✅ OpenCV 카메라가 성공적으로 시작되었습니다!")
     
     print("\nQR 코드를 카메라에 보여주세요. 'q'를 누르면 종료됩니다.")
     print("카메라 화면이 실시간으로 표시됩니다.")
@@ -382,8 +457,10 @@ def try_alternative_opencv():
 def main():
     """메인 함수"""
     print("=== 라즈베리 카메라3 QR 코드 커미션 시스템 ===")
+    print("CM5 + IO 보드 + Pi Camera 3 환경에 최적화됨")
     print("QR 코드 형식 예시: {\"ip\":\"192.168.0.164\",\"port\":8080}")
     print("✅ 카메라 화면이 실시간으로 표시됩니다.")
+    print("✅ 자동 초점 + 고해상도(1280x720) + 안정적인 FPS(20)")
     print("QR 코드를 감지하면 녹색 사각형으로 표시됩니다.")
     print("'q' 키를 누르면 프로그램이 종료됩니다.")
     
