@@ -215,44 +215,34 @@ def camera_stream():
     picam2 = None
     cap = None
     
-    # 1단계: Picamera2 시도 (Pi Camera 3 전용)
+    # 1단계: Picamera2 시도 (Pi Camera 3 전용) - 제공된 코드 방식 참고
     try:
         print("1단계: Picamera2 초기화 시도 중...")
         picam2 = Picamera2()
         
-        # CM5 + IO 보드에 최적화된 설정 + QR 인식 향상
-        config = picam2.create_preview_configuration(
-            main={"size": (1280, 720), "format": "RGB888"},  # 해상도를 낮춰서 성능 향상
-            controls={
-                "FrameRate": 20,  # FPS를 낮춰서 안정성 향상
-                "AfMode": "Continuous",  # 자동 초점 모드
-                "AfRange": "Normal",
-                "AfSpeed": "Normal",
-                "Sharpness": 1.5,  # 선명도 향상 (값을 낮춤)
-                "Contrast": 1.1,   # 대비 향상 (값을 낮춤)
-                "NoiseReductionMode": "HighQuality"
-            },
-            buffer_count=4
+        # 제공된 코드와 동일한 방식으로 설정
+        cfg = picam2.create_video_configuration(
+            main={'size': (1280, 720), 'format': 'RGB888'}
         )
         
         print("카메라 설정 적용 중...")
-        picam2.configure(config)
+        picam2.configure(cfg)
         
         print("카메라 시작 중...")
         picam2.start()
         
-        # 자동 초점 활성화 (에러 처리 강화)
-        try:
-            picam2.set_controls({"AfMode": "Continuous"})
-            print("✅ 자동 초점이 활성화되었습니다.")
-        except Exception as e:
-            print(f"⚠️  자동 초점 설정 실패: {e}")
-            print("자동 초점 없이 계속 진행합니다.")
+        # 자동 초점 설정 (제공된 코드와 동일)
+        picam2.set_controls({"FrameRate": 20})
+        picam2.set_controls({"AfMode": 2})  # 0=Manual, 1=Auto, 2=Continuous
         
-        # 초기 프레임으로 카메라 상태 확인
+        print("✅ 자동 초점이 활성화되었습니다.")
+        
+        # 카메라 안정화를 위한 대기
+        print("카메라 안정화 대기 중...")
+        time.sleep(2)
+        
+        # 초기 프레임으로 카메라 상태 확인 (제공된 코드와 동일한 방식)
         print("초기 프레임 캡처 테스트...")
-        time.sleep(2)  # 카메라 안정화를 위한 대기
-        
         test_frame = picam2.capture_array()
         if test_frame is not None:
             print(f"✅ Picamera2 초기화 성공! 프레임 크기: {test_frame.shape}")
@@ -267,10 +257,6 @@ def camera_stream():
         
         # 2단계: OpenCV 시도
         try:
-            # GStreamer 경고 억제
-            os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
-            os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
-            
             # CM5 + IO 보드에서 사용 가능한 카메라 장치 찾기
             camera_devices = []
             for i in range(5):  # video0부터 video4까지 시도
@@ -290,21 +276,18 @@ def camera_stream():
                 cap = cv2.VideoCapture(device_index)
                 
                 if cap.isOpened():
-                    # 카메라 버퍼 크기 설정
+                    # 제공된 코드와 동일한 방식으로 설정
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                     
-                    # 안정적인 해상도 설정 (더 낮은 해상도로 시작)
+                    # 안정적인 해상도 설정
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                    cap.set(cv2.CAP_PROP_FPS, 15)
-                    
-                    # 추가 카메라 속성 설정
-                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+                    cap.set(cv2.CAP_PROP_FPS, 20)
                     
                     # 설정 적용을 위한 대기
-                    time.sleep(0.5)
+                    time.sleep(1)
                     
-                    # 자동 초점 설정 (에러 처리 강화)
+                    # 자동 초점 설정
                     try:
                         cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
                         print("✅ OpenCV 자동 초점 활성화")
@@ -319,32 +302,17 @@ def camera_stream():
                     print(f"✅ OpenCV 카메라가 열렸습니다! (장치: {device_index})")
                     print(f"  해상도: {width}x{height}, FPS: {fps}")
                     
-                    # 카메라가 완전히 준비될 때까지 대기
-                    print(f"  카메라 안정화 대기 중...")
-                    time.sleep(1)
-                    
-                    # 테스트 프레임 읽기 (여러 번 시도)
-                    print(f"  테스트 프레임 읽기 시도 중...")
-                    test_success = False
-                    
-                    for attempt in range(5):  # 최대 5번 시도
-                        time.sleep(0.5)  # 카메라 안정화 대기
-                        ret, test_frame = cap.read()
-                        
-                        if ret and test_frame is not None:
-                            print(f"  ✅ 테스트 프레임 성공 (시도 {attempt+1}): {test_frame.shape}")
-                            camera_type = "OpenCV"
-                            test_success = True
-                            break
-                        else:
-                            print(f"  ⚠️  테스트 프레임 시도 {attempt+1} 실패")
-                    
-                    if not test_success:
-                        print(f"  ❌ 모든 테스트 프레임 시도 실패")
+                    # 제공된 코드와 동일한 방식으로 프레임 읽기 테스트
+                    print("테스트 프레임 읽기 시작...")
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        print(f"✅ 테스트 프레임 성공: {test_frame.shape}")
+                        camera_type = "OpenCV"
+                        break
+                    else:
+                        print("❌ 테스트 프레임 실패")
                         cap.release()
                         cap = None
-                    else:
-                        break
                 else:
                     print(f"  장치 {device_index} 열기 실패")
                     if cap:
@@ -386,17 +354,11 @@ def camera_stream():
                         time.sleep(0.1)
                         continue
                 else:
-                    # OpenCV 프레임 캡처 (재시도 로직 추가)
-                    frame = None
-                    for retry in range(3):  # 최대 3번 재시도
-                        ret, frame = cap.read()
-                        if ret and frame is not None:
-                            break
-                        time.sleep(0.1)
-                    
-                    if frame is None:
+                    # 제공된 코드와 동일한 방식으로 프레임 캡처
+                    ret, frame = cap.read()
+                    if not ret or frame is None:
                         print("❌ OpenCV에서 프레임을 읽을 수 없습니다.")
-                        time.sleep(0.2)
+                        time.sleep(0.1)
                         continue
                 
                 frame_count += 1
