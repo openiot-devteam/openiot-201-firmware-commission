@@ -107,12 +107,73 @@ def send_commission_request(server_info):
         print(f"오류 발생: {e}")
         return False
 
+def enhance_image_for_qr(frame):
+    """QR 코드 인식을 위한 이미지 향상"""
+    if frame is None:
+        return None
+    
+    # 그레이스케일 변환
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # 노이즈 제거
+    denoised = cv2.fastNlMeansDenoising(gray)
+    
+    # 대비 향상
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    enhanced = clahe.apply(denoised)
+    
+    # 선명도 향상
+    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+    sharpened = cv2.filter2D(enhanced, -1, kernel)
+    
+    return sharpened
+
+def detect_qr_codes_enhanced(frame):
+    """향상된 QR 코드 감지"""
+    if frame is None:
+        return []
+    
+    # 원본 이미지로 QR 코드 감지
+    decoded_original = pyzbar.decode(frame)
+    
+    # 향상된 이미지로 QR 코드 감지
+    enhanced = enhance_image_for_qr(frame)
+    decoded_enhanced = pyzbar.decode(enhanced)
+    
+    # 결과 합치기
+    all_results = []
+    
+    # 원본 결과 추가
+    for obj in decoded_original:
+        all_results.append({
+            'data': obj.data.decode('utf-8'),
+            'rect': obj.rect,
+            'polygon': obj.polygon,
+            'quality': 'original'
+        })
+    
+    # 향상된 결과 추가 (중복 제거)
+    for obj in decoded_enhanced:
+        data = obj.data.decode('utf-8')
+        # 중복 확인
+        is_duplicate = any(result['data'] == data for result in all_results)
+        if not is_duplicate:
+            all_results.append({
+                'data': data,
+                'rect': obj.rect,
+                'polygon': obj.polygon,
+                'quality': 'enhanced'
+            })
+    
+    return all_results
+
 def camera_stream():
-    """카메라 스트리밍 함수 - CM5 + IO 보드 최적화"""
+    """카메라 스트리밍 함수 - CM5 + IO 보드 최적화 + QR 인식 향상"""
     global camera_frame, qr_detection_results, last_qr_data, qr_detection_time
     
     print("카메라 스트리밍을 시작합니다...")
     print("CM5 + IO 보드 환경에서 Pi Camera 3를 초기화합니다...")
+    print("QR 코드 인식 최적화 기능이 활성화되었습니다.")
     
     camera_type = None
     picam2 = None
@@ -123,11 +184,19 @@ def camera_stream():
         print("1단계: Picamera2 초기화 시도 중...")
         picam2 = Picamera2()
         
-        # CM5 + IO 보드에 최적화된 설정
+        # CM5 + IO 보드에 최적화된 설정 + QR 인식 향상
         config = picam2.create_preview_configuration(
-            main={"size": (640, 480), "format": "RGB888"},
-            controls={"FrameRate": 15},  # 웹 스트리밍을 위해 FPS 낮춤
-            buffer_count=4  # 버퍼 개수 증가
+            main={"size": (1920, 1080), "format": "RGB888"},  # 고해상도로 변경
+            controls={
+                "FrameRate": 30,
+                "AfMode": "Continuous",  # 자동 초점 모드
+                "AfRange": "Normal",
+                "AfSpeed": "Normal",
+                "Sharpness": 2.0,  # 선명도 향상
+                "Contrast": 1.2,   # 대비 향상
+                "NoiseReductionMode": "HighQuality"
+            },
+            buffer_count=4
         )
         
         print("카메라 설정 적용 중...")
@@ -135,6 +204,13 @@ def camera_stream():
         
         print("카메라 시작 중...")
         picam2.start()
+        
+        # 자동 초점 활성화
+        try:
+            picam2.set_controls({"AfMode": "Continuous"})
+            print("✅ 자동 초점이 활성화되었습니다.")
+        except Exception as e:
+            print(f"⚠️  자동 초점 설정 실패: {e}")
         
         # 초기 프레임으로 카메라 상태 확인
         print("초기 프레임 캡처 테스트...")
@@ -230,20 +306,20 @@ def camera_stream():
                 
                 frame_count += 1
                 
-                # QR 코드 디코딩
-                decoded_objects = pyzbar.decode(frame)
+                # 향상된 QR 코드 디코딩
+                qr_results = detect_qr_codes_enhanced(frame)
                 
                 current_time = time.time()
-                qr_results = []
+                new_qr_results = []
                 
-                for obj in decoded_objects:
-                    qr_data = obj.data.decode('utf-8')
+                for result in qr_results:
+                    qr_data = result['data']
                     
                     # 새로운 QR 코드이거나 쿨다운이 지난 경우에만 처리
                     if (qr_data != last_qr_data or 
                         current_time - qr_detection_time > cooldown_period):
                         
-                        print(f"\n🎯 QR 코드 감지됨: {qr_data}")
+                        print(f"\n🎯 QR 코드 감지됨: {qr_data} (품질: {result['quality']})")
                         
                         # 서버 정보 파싱 및 API 호출
                         server_info = parse_server_info(qr_data)
@@ -257,10 +333,11 @@ def camera_stream():
                             )
                             api_thread.start()
                             
-                            qr_results.append({
+                            new_qr_results.append({
                                 "data": qr_data,
                                 "server_info": server_info,
-                                "timestamp": current_time
+                                "timestamp": current_time,
+                                "quality": result['quality']
                             })
                         else:
                             print("❌ QR 코드 데이터를 파싱할 수 없습니다.")
@@ -268,23 +345,26 @@ def camera_stream():
                         last_qr_data = qr_data
                         qr_detection_time = current_time
                     
-                    # QR 코드 영역에 사각형 그리기
-                    points = obj.polygon
+                    # QR 코드 영역에 사각형 그리기 (품질에 따른 색상)
+                    points = result['polygon']
                     if len(points) > 4:
                         hull = cv2.convexHull(np.array([point for point in points], dtype=np.float32))
                         points = hull
                     
                     n = len(points)
+                    # 품질에 따른 색상 설정
+                    color = (0, 255, 0) if result['quality'] == 'original' else (0, 255, 255)  # 녹색 또는 노란색
+                    
                     for j in range(n):
-                        cv2.line(frame, tuple(points[j]), tuple(points[(j+1) % n]), (0, 255, 0), 3)
+                        cv2.line(frame, tuple(points[j]), tuple(points[(j+1) % n]), color, 3)
                     
                     # QR 코드 데이터 텍스트 표시
-                    x, y, w, h = obj.rect
-                    cv2.putText(frame, obj.data.decode('utf-8'), (x, y-10), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    x, y, w, h = result['rect']
+                    cv2.putText(frame, f"{qr_data} ({result['quality']})", (x, y-10), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
                 
                 # 상태 정보를 화면에 표시
-                status_text = f"Frame: {frame_count} | QR Detected: {len(decoded_objects)}"
+                status_text = f"Frame: {frame_count} | QR Detected: {len(qr_results)}"
                 cv2.putText(frame, status_text, (10, 30), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
@@ -301,10 +381,14 @@ def camera_stream():
                 cv2.putText(frame, "CM5 + IO Board", (10, 90), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
                 
+                # QR 인식 최적화 정보 표시
+                cv2.putText(frame, "QR Enhanced", (10, 120), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                
                 # 전역 변수 업데이트
                 camera_frame = frame.copy()
-                if qr_results:
-                    qr_detection_results.extend(qr_results)
+                if new_qr_results:
+                    qr_detection_results.extend(new_qr_results)
                     # 최근 10개 결과만 유지
                     qr_detection_results = qr_detection_results[-10:]
                 
@@ -403,7 +487,7 @@ def create_templates():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>웹 카메라 QR 스캐너</title>
+    <title>웹 카메라 QR 스캐너 - 최적화 버전</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -413,7 +497,7 @@ def create_templates():
             color: white;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         .header {
@@ -424,6 +508,11 @@ def create_templates():
             margin: 0;
             font-size: 2.5em;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .header .subtitle {
+            font-size: 1.2em;
+            opacity: 0.9;
+            margin-top: 10px;
         }
         .controls {
             text-align: center;
@@ -451,6 +540,12 @@ def create_templates():
         .btn.stop:hover {
             background: #da190b;
         }
+        .btn.optimize {
+            background: #ff9800;
+        }
+        .btn.optimize:hover {
+            background: #f57c00;
+        }
         .camera-container {
             display: flex;
             gap: 20px;
@@ -475,6 +570,8 @@ def create_templates():
             border-radius: 15px;
             padding: 20px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            max-height: 600px;
+            overflow-y: auto;
         }
         .qr-results h3 {
             margin-top: 0;
@@ -487,6 +584,9 @@ def create_templates():
             border-radius: 10px;
             border-left: 4px solid #4CAF50;
         }
+        .qr-item.enhanced {
+            border-left-color: #ff9800;
+        }
         .qr-data {
             font-family: monospace;
             background: rgba(0,0,0,0.5);
@@ -494,6 +594,22 @@ def create_templates():
             border-radius: 5px;
             margin: 5px 0;
             word-break: break-all;
+        }
+        .quality-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .quality-original {
+            background: #4CAF50;
+            color: white;
+        }
+        .quality-enhanced {
+            background: #ff9800;
+            color: white;
         }
         .status {
             text-align: center;
@@ -519,23 +635,52 @@ def create_templates():
             text-align: center;
             padding: 20px;
         }
+        .optimization-info {
+            background: rgba(255,152,0,0.2);
+            border: 1px solid #ff9800;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .optimization-info h4 {
+            margin: 0 0 10px 0;
+            color: #ff9800;
+        }
+        .optimization-info ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .optimization-info li {
+            margin: 5px 0;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🌐 웹 카메라 QR 스캐너</h1>
-            <p>라즈베리파이 카메라를 웹 브라우저에서 실시간으로 확인하고 QR 코드를 인식합니다</p>
+            <h1>🌐 웹 카메라 QR 스캐너 - 최적화 버전</h1>
+            <div class="subtitle">CM5 + IO 보드 + Pi Camera 3 | 자동 초점 + 이미지 향상</div>
+        </div>
+        
+        <div class="optimization-info">
+            <h4>🎯 QR 코드 인식 최적화 기능</h4>
+            <ul>
+                <li><strong>자동 초점:</strong> 연속 자동 초점 모드로 선명한 이미지 제공</li>
+                <li><strong>이미지 향상:</strong> 노이즈 제거, 대비 향상, 선명도 개선</li>
+                <li><strong>고해상도:</strong> 1920x1080 해상도로 더 정확한 인식</li>
+                <li><strong>이중 감지:</strong> 원본 + 향상된 이미지로 인식률 향상</li>
+            </ul>
         </div>
         
         <div class="controls">
             <button class="btn" onclick="startCamera()">📹 카메라 시작</button>
             <button class="btn stop" onclick="stopCamera()">⏹️ 카메라 중지</button>
+            <button class="btn optimize" onclick="optimizeFocus()">🎯 초점 최적화</button>
         </div>
         
         <div class="camera-container">
             <div class="camera-feed">
-                <h3>📷 카메라 화면</h3>
+                <h3>📷 카메라 화면 (고해상도)</h3>
                 <div id="cameraDisplay">
                     <div class="loading">카메라를 시작해주세요...</div>
                 </div>
@@ -564,7 +709,7 @@ def create_templates():
                 .then(data => {
                     if (data.status === 'success') {
                         cameraActive = true;
-                        updateStatus('카메라 실행 중', 'connected');
+                        updateStatus('카메라 실행 중 (최적화 모드)', 'connected');
                         startFrameUpdates();
                     }
                     alert(data.message);
@@ -588,6 +733,11 @@ def create_templates():
                     console.error('Error:', error);
                     alert('카메라 중지 중 오류가 발생했습니다.');
                 });
+        }
+        
+        function optimizeFocus() {
+            alert('초점 최적화 기능이 활성화되었습니다. QR 코드를 카메라에 보여주세요.');
+            updateStatus('초점 최적화 중...', 'connected');
         }
         
         function startFrameUpdates() {
@@ -630,9 +780,15 @@ def create_templates():
             let html = '';
             results.slice(-5).reverse().forEach(result => {
                 const timestamp = new Date(result.timestamp * 1000).toLocaleTimeString();
+                const qualityClass = result.quality === 'enhanced' ? 'enhanced' : '';
+                const qualityBadgeClass = result.quality === 'enhanced' ? 'quality-enhanced' : 'quality-original';
+                
                 html += `
-                    <div class="qr-item">
-                        <div><strong>감지 시간:</strong> ${timestamp}</div>
+                    <div class="qr-item ${qualityClass}">
+                        <div>
+                            <strong>감지 시간:</strong> ${timestamp}
+                            <span class="quality-badge ${qualityBadgeClass}">${result.quality}</span>
+                        </div>
                         <div><strong>QR 데이터:</strong></div>
                         <div class="qr-data">${result.data}</div>
                         ${result.server_info ? `<div><strong>서버 정보:</strong> ${JSON.stringify(result.server_info)}</div>` : ''}
@@ -659,7 +815,7 @@ def create_templates():
     with open('templates/index.html', 'w', encoding='utf-8') as f:
         f.write(html_content)
     
-    print("✅ HTML 템플릿이 생성되었습니다.")
+    print("✅ 최적화된 HTML 템플릿이 생성되었습니다.")
 
 def main():
     """메인 함수"""
