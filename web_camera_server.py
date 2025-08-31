@@ -167,6 +167,39 @@ def detect_qr_codes_enhanced(frame):
     
     return all_results
 
+def check_system_status():
+    """시스템 상태 확인"""
+    print("=== 시스템 상태 확인 ===")
+    
+    # 비디오 장치 확인
+    video_devices = []
+    for i in range(10):
+        if os.path.exists(f'/dev/video{i}'):
+            video_devices.append(i)
+    
+    print(f"비디오 장치: {video_devices}")
+    
+    # 권한 확인
+    for device in video_devices:
+        try:
+            stat = os.stat(f'/dev/video{device}')
+            mode = oct(stat.st_mode)[-3:]
+            print(f"  /dev/video{device}: 권한 {mode}")
+        except:
+            print(f"  /dev/video{device}: 권한 확인 불가")
+    
+    # 메모리 상태 확인
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            mem_info = f.read()
+            mem_total = [line for line in mem_info.split('\n') if 'MemTotal' in line]
+            if mem_total:
+                print(f"메모리: {mem_total[0]}")
+    except:
+        print("메모리 정보 확인 불가")
+    
+    print()
+
 def camera_stream():
     """카메라 스트리밍 함수 - CM5 + IO 보드 최적화 + QR 인식 향상"""
     global camera_frame, qr_detection_results, last_qr_data, qr_detection_time, camera_active
@@ -174,6 +207,9 @@ def camera_stream():
     print("카메라 스트리밍을 시작합니다...")
     print("CM5 + IO 보드 환경에서 Pi Camera 3를 초기화합니다...")
     print("QR 코드 인식 최적화 기능이 활성화되었습니다.")
+    
+    # 시스템 상태 확인
+    check_system_status()
     
     camera_type = None
     picam2 = None
@@ -231,6 +267,10 @@ def camera_stream():
         
         # 2단계: OpenCV 시도
         try:
+            # GStreamer 경고 억제
+            os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
+            os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
+            
             # CM5 + IO 보드에서 사용 가능한 카메라 장치 찾기
             camera_devices = []
             for i in range(5):  # video0부터 video4까지 시도
@@ -250,10 +290,19 @@ def camera_stream():
                 cap = cv2.VideoCapture(device_index)
                 
                 if cap.isOpened():
-                    # 안정적인 해상도 설정
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-                    cap.set(cv2.CAP_PROP_FPS, 20)
+                    # 카메라 버퍼 크기 설정
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    
+                    # 안정적인 해상도 설정 (더 낮은 해상도로 시작)
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    cap.set(cv2.CAP_PROP_FPS, 15)
+                    
+                    # 추가 카메라 속성 설정
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+                    
+                    # 설정 적용을 위한 대기
+                    time.sleep(0.5)
                     
                     # 자동 초점 설정 (에러 처리 강화)
                     try:
@@ -270,16 +319,32 @@ def camera_stream():
                     print(f"✅ OpenCV 카메라가 열렸습니다! (장치: {device_index})")
                     print(f"  해상도: {width}x{height}, FPS: {fps}")
                     
-                    # 테스트 프레임 읽기
-                    ret, test_frame = cap.read()
-                    if ret and test_frame is not None:
-                        print(f"  테스트 프레임 성공: {test_frame.shape}")
-                        camera_type = "OpenCV"
-                        break
-                    else:
-                        print(f"  테스트 프레임 실패")
+                    # 카메라가 완전히 준비될 때까지 대기
+                    print(f"  카메라 안정화 대기 중...")
+                    time.sleep(1)
+                    
+                    # 테스트 프레임 읽기 (여러 번 시도)
+                    print(f"  테스트 프레임 읽기 시도 중...")
+                    test_success = False
+                    
+                    for attempt in range(5):  # 최대 5번 시도
+                        time.sleep(0.5)  # 카메라 안정화 대기
+                        ret, test_frame = cap.read()
+                        
+                        if ret and test_frame is not None:
+                            print(f"  ✅ 테스트 프레임 성공 (시도 {attempt+1}): {test_frame.shape}")
+                            camera_type = "OpenCV"
+                            test_success = True
+                            break
+                        else:
+                            print(f"  ⚠️  테스트 프레임 시도 {attempt+1} 실패")
+                    
+                    if not test_success:
+                        print(f"  ❌ 모든 테스트 프레임 시도 실패")
                         cap.release()
                         cap = None
+                    else:
+                        break
                 else:
                     print(f"  장치 {device_index} 열기 실패")
                     if cap:
@@ -288,6 +353,12 @@ def camera_stream():
             
             if not camera_type:
                 print("❌ 모든 비디오 장치에서 카메라를 열 수 없습니다.")
+                print("\n💡 문제 해결 방법:")
+                print("1. 카메라 하드웨어 연결 확인")
+                print("2. sudo apt-get install v4l-utils")
+                print("3. v4l2-ctl --list-devices 실행")
+                print("4. sudo chmod 666 /dev/video*")
+                print("5. 시스템 재부팅")
                 return
                 
         except Exception as e:
@@ -315,10 +386,17 @@ def camera_stream():
                         time.sleep(0.1)
                         continue
                 else:
-                    ret, frame = cap.read()
-                    if not ret or frame is None:
-                        print("❌ OpenCV에서 프레임을 읽을 수 없습니다.")
+                    # OpenCV 프레임 캡처 (재시도 로직 추가)
+                    frame = None
+                    for retry in range(3):  # 최대 3번 재시도
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            break
                         time.sleep(0.1)
+                    
+                    if frame is None:
+                        print("❌ OpenCV에서 프레임을 읽을 수 없습니다.")
+                        time.sleep(0.2)
                         continue
                 
                 frame_count += 1
