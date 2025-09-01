@@ -1078,6 +1078,7 @@ def main():
     print(f"서버 IP: {server_ip}")
     print(f"웹 브라우저에서 http://{server_ip}:5000 으로 접속하세요")
     print("또는 http://localhost:5000 으로 접속하세요")
+    print("github test")
     
     # Flask 서버 시작
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
