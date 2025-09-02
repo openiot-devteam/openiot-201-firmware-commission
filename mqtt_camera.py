@@ -1493,7 +1493,7 @@ class RemoteMQTTClient:
 
     def on_message(self, client, userdata, msg):
         """메시지 수신 시 처리"""
-        global current_gamma, current_mode, current_wb, current_roi, current_bitrate, of_enabled, current_frame, current_fps
+        global current_gamma, current_mode, current_wb, current_roi, current_bitrate, of_enabled, current_frame, current_fps, camera_thread
         global SCHEDULE_MODE_HOUR, SCHEDULE_MODE_MINUTE, MOTION_MODE_HOUR, MOTION_MODE_MINUTE, SCHEDULE_DAYS, MOTION_DAYS, SCHEDULE_DURATION_SEC
 
         raw = msg.payload.decode('utf-8', 'ignore')
@@ -1543,7 +1543,6 @@ class RemoteMQTTClient:
                     print(f"[CMD] 녹화 중지: {ok} {msg_text}")
                 elif cmd in ['camera_on']:
                     try:
-                        global camera_thread
                         if camera_thread is None or not camera_thread.is_alive():
                             camera_stop_event.clear()
                             camera_thread = threading.Thread(target=lambda: camera_on(), daemon=True)
