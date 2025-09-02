@@ -496,6 +496,52 @@ def start_hls_http_server(port: int = None):
     if hls_httpd_server is not None:
         return
     ensure_hls_dir()
+    # 기본 index.html 자동 생성
+    try:
+        index_path = os.path.join(hls_dir, 'index.html')
+        if (not os.path.exists(index_path)):
+            html = """<!DOCTYPE html>
+<html lang=\"ko\">
+<head>
+  <meta charset=\"UTF-8\"/>
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>
+  <title>HLS 스트리밍</title>
+  <style>
+    body{margin:0;padding:20px;font-family:system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial}
+    .wrap{max-width:960px;margin:0 auto}
+    h1{margin:0 0 16px}
+    video{width:100%;max-height:70vh;background:#000;border-radius:8px}
+    .hint{margin-top:12px;color:#555}
+  </style>
+  <script src=\"https://cdn.jsdelivr.net/npm/hls.js@latest\"></script>
+  </head>
+<body>
+  <div class=\"wrap\">
+    <h1>HLS 스트리밍</h1>
+    <video id=\"video\" controls autoplay muted playsinline></video>
+    <div class=\"hint\">재생 URL: index.m3u8 (이 페이지는 mqtt_camera가 자동 생성했습니다)</div>
+  </div>
+  <script>
+    const video = document.getElementById('video');
+    const src = 'index.m3u8';
+    if (Hls.isSupported()) {
+      const hls = new Hls({maxBufferLength:10});
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, function(){ video.play(); });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = src;
+      video.addEventListener('loadedmetadata', function() { video.play(); });
+    } else {
+      document.body.insertAdjacentHTML('beforeend', '<p>HLS를 재생할 수 없는 브라우저입니다.</p>');
+    }
+  </script>
+</body>
+</html>"""
+            with open(index_path, 'w', encoding='utf-8') as f:
+                f.write(html)
+    except Exception:
+        pass
     class HLSHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=hls_dir, **kwargs)
