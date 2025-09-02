@@ -771,6 +771,69 @@ def recording_status_route():
     status = get_recording_status()
     return jsonify(status)
 
+@app.route('/list_recordings')
+def list_recordings_route():
+    """녹화된 파일 목록 API"""
+    try:
+        # 현재 디렉토리에서 녹화 파일들 찾기
+        recording_files = []
+        for filename in os.listdir('.'):
+            if filename.startswith('recording_') and filename.endswith('.mp4'):
+                file_path = os.path.join('.', filename)
+                file_stat = os.stat(file_path)
+                
+                recording_files.append({
+                    'filename': filename,
+                    'size_mb': round(file_stat.st_size / (1024 * 1024), 2),
+                    'created_time': datetime.fromtimestamp(file_stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S'),
+                    'modified_time': datetime.fromtimestamp(file_stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                })
+        
+        # 생성 시간 기준으로 정렬 (최신순)
+        recording_files.sort(key=lambda x: x['created_time'], reverse=True)
+        
+        return jsonify({
+            'status': 'success',
+            'files': recording_files,
+            'count': len(recording_files)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'파일 목록 조회 실패: {e}'
+        })
+
+@app.route('/delete_recording/<filename>')
+def delete_recording_route(filename):
+    """녹화 파일 삭제 API"""
+    try:
+        # 보안: 파일명 검증
+        if not filename.startswith('recording_') or not filename.endswith('.mp4'):
+            return jsonify({
+                'status': 'error',
+                'message': '잘못된 파일명입니다.'
+            })
+        
+        file_path = os.path.join('.', filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return jsonify({
+                'status': 'success',
+                'message': f'파일 {filename}이 삭제되었습니다.'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': '파일을 찾을 수 없습니다.'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'파일 삭제 실패: {e}'
+        })
+
 def start_recording(frame):
     """녹화 시작"""
     global recording, video_writer, recording_start_time, recording_filename
@@ -1079,6 +1142,85 @@ def create_templates():
         .recording-info {
             font-size: 16px;
         }
+        .recordings-list {
+            background: rgba(0,0,0,0.8);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .recordings-list h3 {
+            margin-top: 0;
+            color: #4CAF50;
+            text-align: center;
+        }
+        .recordings-controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .btn.refresh {
+            background: #2196F3;
+        }
+        .btn.refresh:hover {
+            background: #1976D2;
+        }
+        .btn.download {
+            background: #4CAF50;
+        }
+        .btn.download:hover {
+            background: #45a049;
+        }
+        .recordings-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .recording-item {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 10px;
+            border-left: 4px solid #4CAF50;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .recording-info-left {
+            flex: 1;
+        }
+        .recording-info-right {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .recording-filename {
+            font-weight: bold;
+            color: #4CAF50;
+            margin-bottom: 5px;
+        }
+        .recording-details {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        .recording-actions {
+            display: flex;
+            gap: 5px;
+        }
+        .btn.small {
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+        .btn.play {
+            background: #4CAF50;
+        }
+        .btn.play:hover {
+            background: #45a049;
+        }
+        .btn.delete {
+            background: #f44336;
+        }
+        .btn.delete:hover {
+            background: #da190b;
+        }
     </style>
 </head>
 <body>
@@ -1129,6 +1271,17 @@ def create_templates():
             <div class="recording-info">
                 <h4>🎥 녹화 상태</h4>
                 <div id="recordingInfo">녹화 중이 아닙니다.</div>
+            </div>
+        </div>
+        
+        <div class="recordings-list">
+            <h3>📁 녹화된 파일 목록</h3>
+            <div class="recordings-controls">
+                <button class="btn refresh" onclick="refreshRecordings()">🔄 새로고침</button>
+                <button class="btn download" onclick="downloadAllRecordings()">📥 전체 다운로드</button>
+            </div>
+            <div id="recordingsList" class="recordings-container">
+                <div class="loading">녹화된 파일을 불러오는 중...</div>
             </div>
         </div>
     </div>
