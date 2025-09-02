@@ -55,7 +55,7 @@ hls_httpd_thread = None
 hls_http_port = 8090
 
 # --- MQTT 설정 ---
-MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', '127.0.0.1')
+MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', '192.168.0.76')
 MQTT_BROKER_PORT = int(os.getenv('MQTT_BROKER_PORT', '1883'))
 # 쉼표로 구분된 토픽 목록 환경변수 지원. 기본 예시 토픽들.
 MQTT_TOPICS = [t.strip() for t in os.getenv('MQTT_TOPICS', 'things/+/command/req,things/+/status/req,+/queue').split(',') if t.strip()]
