@@ -57,6 +57,15 @@ hls_http_port = 8090
 # --- MQTT 설정 ---
 MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', '192.168.0.76')
 MQTT_BROKER_PORT = int(os.getenv('MQTT_BROKER_PORT', '8883'))
+# 인증/보안 설정
+MQTT_USERNAME = os.getenv('MQTT_USERNAME', '')
+MQTT_PASSWORD = os.getenv('MQTT_PASSWORD', '')
+MQTT_TLS_ENABLED = os.getenv('MQTT_TLS_ENABLED', 'true').lower() in ('1', 'true', 'yes')
+MQTT_CA_CERT = os.getenv('MQTT_CA_CERT', '')
+MQTT_CLIENT_CERT = os.getenv('MQTT_CLIENT_CERT', '')
+MQTT_CLIENT_KEY = os.getenv('MQTT_CLIENT_KEY', '')
+MQTT_TLS_INSECURE = os.getenv('MQTT_TLS_INSECURE', 'false').lower() in ('1', 'true', 'yes')
+MQTT_DEBUG = os.getenv('MQTT_DEBUG', 'false').lower() in ('1', 'true', 'yes')
 # 쉼표로 구분된 토픽 목록 환경변수 지원. 기본 예시 토픽들.
 MQTT_TOPICS = [t.strip() for t in os.getenv('MQTT_TOPICS', 'things/+/command/req,things/+/status/req,+/queue').split(',') if t.strip()]
 _mqtt_client = None
@@ -197,10 +206,40 @@ def start_mqtt_subscriber():
     client = mqtt.Client(client_id=client_id)
     client.on_connect = mqtt_on_connect
     client.on_message = mqtt_on_message
+    client.on_disconnect = lambda c, u, rc: print(f"[MQTT] 연결 해제: rc={rc}")
+    if MQTT_DEBUG:
+        try:
+            client.on_log = lambda c, u, level, buf: print(f"[MQTT-LOG] {buf}")
+        except Exception:
+            pass
+
+    # 사용자 인증
+    try:
+        if MQTT_USERNAME:
+            client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD or None)
+            print("[MQTT] 사용자 인증 적용")
+    except Exception as e:
+        print(f"[MQTT] 사용자 인증 설정 실패: {e}")
+
+    # TLS 설정 (포트 8883인 경우 기본 활성화 권장)
+    if MQTT_TLS_ENABLED:
+        try:
+            import ssl as _ssl
+            tls_kwargs = { 'tls_version': _ssl.PROTOCOL_TLS }
+            if MQTT_CA_CERT:
+                tls_kwargs['ca_certs'] = MQTT_CA_CERT
+            if MQTT_CLIENT_CERT and MQTT_CLIENT_KEY:
+                tls_kwargs['certfile'] = MQTT_CLIENT_CERT
+                tls_kwargs['keyfile'] = MQTT_CLIENT_KEY
+            client.tls_set(**tls_kwargs)
+            client.tls_insecure_set(bool(MQTT_TLS_INSECURE))
+            print(f"[MQTT] TLS 적용: ca={bool(MQTT_CA_CERT)} cert={bool(MQTT_CLIENT_CERT)} insecure={MQTT_TLS_INSECURE}")
+        except Exception as e:
+            print(f"[MQTT] TLS 설정 실패: {e}")
     try:
         client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
         client.loop_start()
-        print(f"[MQTT] 브로커 연결 시도: {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
+        print(f"[MQTT] 브로커 연결 시도: host={MQTT_BROKER_HOST} port={MQTT_BROKER_PORT} tls={MQTT_TLS_ENABLED}")
         _mqtt_client = client
     except Exception as e:
         print(f"[MQTT] 연결 실패: {e}")
