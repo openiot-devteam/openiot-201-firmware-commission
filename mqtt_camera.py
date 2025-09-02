@@ -576,6 +576,18 @@ def start_hls_http_server(port: int = None):
     class HLSHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=hls_dir, **kwargs)
+        def end_headers(self):
+            try:
+                self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+                self.send_header('Pragma', 'no-cache')
+                self.send_header('Expires', '0')
+                self.send_header('Access-Control-Allow-Origin', '*')
+            except Exception:
+                pass
+            try:
+                super().end_headers()
+            except Exception:
+                pass
     try:
         hls_httpd_server = ThreadingHTTPServer(("0.0.0.0", int(port)), HLSHandler)
         hls_httpd_thread = threading.Thread(target=hls_httpd_server.serve_forever, daemon=True)
@@ -605,12 +617,17 @@ def start_hls_pipeline(width: int, height: int, framerate: int, bitrate_kbps: in
         return
     ensure_hls_dir()
     Gst.init(None)
+    # GOP=framerate*2, 주기적 SPS/PPS 삽입(config-interval=1)
+    keyint = max(1, int(framerate) * 2)
+    playlist = os.path.join(hls_dir, 'index.m3u8')
+    segment = os.path.join(hls_dir, 'segment_%05d.ts')
     launch = (
         f"appsrc name=hls_src is-live=true format=time do-timestamp=true block=true "
         f"caps=video/x-raw,format=RGB,width={width},height={height},framerate={framerate}/1 ! "
         f"videoconvert ! video/x-raw,format=I420 ! "
-        f"x264enc tune=zerolatency key-int-max=60 bitrate={bitrate_kbps} ! h264parse ! mpegtsmux ! "
-        f"hlssink name=hlsink target-duration=2 max-files=10 playlist-location={os.path.join(hls_dir, 'index.m3u8')} location={os.path.join(hls_dir, 'segment_%05d.ts')}"
+        f"x264enc tune=zerolatency speed-preset=ultrafast key-int-max={keyint} bitrate={bitrate_kbps} ! "
+        f"h264parse config-interval=1 ! mpegtsmux alignment=7 ! "
+        f"hlssink name=hlsink target-duration=2 max-files=10 playlist-length=6 playlist-location={playlist} location={segment}"
     )
     try:
         hls_pipeline = Gst.parse_launch(launch)
@@ -2421,6 +2438,7 @@ def camera_on(SCHEDULE_DURATION_SEC=None):
                     hls_buf = Gst.Buffer.new_allocate(None, len(hls_bytes), None)
                     hls_buf.fill(0, hls_bytes)
                     hls_buf.pts = int(hls_pts_ns)
+                    hls_buf.dts = int(hls_pts_ns)
                     hls_buf.duration = frame_duration_ns
                     hls_appsrc.emit('push-buffer', hls_buf)
                     hls_pts_ns += frame_duration_ns
