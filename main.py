@@ -21,6 +21,7 @@ from PIL import Image
 import os
 import uuid
 import subprocess
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -31,6 +32,12 @@ camera_active = False
 last_qr_data = None
 qr_detection_time = 0
 cooldown_period = 3
+
+# 녹화 관련 전역 변수
+recording = False
+video_writer = None
+recording_start_time = None
+recording_filename = None
 
 def get_client_ip():
     """클라이언트 IP 주소를 가져오는 함수"""
@@ -586,6 +593,10 @@ def camera_stream():
                 cv2.putText(frame, "QR Enhanced", (10, 120), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                 
+                # 녹화 중인 경우 프레임을 녹화 파일에 쓰기
+                if recording:
+                    write_frame_to_recording(frame)
+                
                 # 전역 변수 업데이트
                 camera_frame = frame.copy()
                 if new_qr_results:
@@ -606,6 +617,11 @@ def camera_stream():
         print(f"카메라 스트리밍 오류: {e}")
     finally:
         camera_active = False
+        
+        # 녹화 중인 경우 녹화 중지
+        if recording:
+            stop_recording()
+        
         if camera_type == "Picamera2" and picam2:
             picam2.stop()
             picam2.close()
@@ -726,6 +742,135 @@ def stop_camera():
     camera_active = False
     return jsonify({'status': 'success', 'message': '카메라가 중지되었습니다.'})
 
+@app.route('/start_recording')
+def start_recording_route():
+    """녹화 시작 API"""
+    global camera_frame
+    
+    if not camera_active or camera_frame is None:
+        return jsonify({'status': 'error', 'message': '카메라가 활성화되지 않았습니다.'})
+    
+    success, message = start_recording(camera_frame)
+    if success:
+        return jsonify({'status': 'success', 'message': message})
+    else:
+        return jsonify({'status': 'error', 'message': message})
+
+@app.route('/stop_recording')
+def stop_recording_route():
+    """녹화 중지 API"""
+    success, message = stop_recording()
+    if success:
+        return jsonify({'status': 'success', 'message': message})
+    else:
+        return jsonify({'status': 'error', 'message': message})
+
+@app.route('/recording_status')
+def recording_status_route():
+    """녹화 상태 확인 API"""
+    status = get_recording_status()
+    return jsonify(status)
+
+def start_recording(frame):
+    """녹화 시작"""
+    global recording, video_writer, recording_start_time, recording_filename
+    
+    if recording:
+        return False, "이미 녹화 중입니다."
+    
+    try:
+        # 현재 시간으로 파일명 생성
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        recording_filename = f"recording_{timestamp}.mp4"
+        
+        # 프레임 크기 가져오기
+        height, width = frame.shape[:2]
+        
+        # VideoWriter 초기화 (H.264 코덱 사용)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(recording_filename, fourcc, 20.0, (width, height))
+        
+        if not video_writer.isOpened():
+            return False, "비디오 writer를 초기화할 수 없습니다."
+        
+        recording = True
+        recording_start_time = time.time()
+        
+        print(f"✅ 녹화가 시작되었습니다: {recording_filename}")
+        return True, f"녹화가 시작되었습니다: {recording_filename}"
+        
+    except Exception as e:
+        print(f"❌ 녹화 시작 실패: {e}")
+        return False, f"녹화 시작 실패: {e}"
+
+def stop_recording():
+    """녹화 중지"""
+    global recording, video_writer, recording_start_time, recording_filename
+    
+    if not recording:
+        return False, "녹화 중이 아닙니다."
+    
+    try:
+        recording = False
+        
+        if video_writer:
+            video_writer.release()
+            video_writer = None
+        
+        if recording_start_time:
+            duration = time.time() - recording_start_time
+            recording_start_time = None
+            
+            # 파일 크기 확인
+            if os.path.exists(recording_filename):
+                file_size = os.path.getsize(recording_filename)
+                file_size_mb = file_size / (1024 * 1024)
+                
+                print(f"✅ 녹화가 완료되었습니다: {recording_filename}")
+                print(f"  - 녹화 시간: {duration:.1f}초")
+                print(f"  - 파일 크기: {file_size_mb:.2f}MB")
+                
+                return True, f"녹화 완료: {recording_filename} ({duration:.1f}초, {file_size_mb:.2f}MB)"
+            else:
+                return False, "녹화 파일을 찾을 수 없습니다."
+        
+        return True, "녹화가 중지되었습니다."
+        
+    except Exception as e:
+        print(f"❌ 녹화 중지 실패: {e}")
+        return False, f"녹화 중지 실패: {e}"
+
+def get_recording_status():
+    """녹화 상태 반환"""
+    global recording, recording_start_time, recording_filename
+    
+    if not recording:
+        return {
+            'recording': False,
+            'message': '녹화 중이 아닙니다.'
+        }
+    
+    duration = time.time() - recording_start_time if recording_start_time else 0
+    
+    return {
+        'recording': True,
+        'filename': recording_filename,
+        'duration': f"{duration:.1f}초",
+        'message': f"녹화 중: {recording_filename} ({duration:.1f}초)"
+    }
+
+def write_frame_to_recording(frame):
+    """프레임을 녹화 파일에 쓰기"""
+    global recording, video_writer
+    
+    if recording and video_writer and video_writer.isOpened():
+        try:
+            video_writer.write(frame)
+        except Exception as e:
+            print(f"❌ 프레임 녹화 실패: {e}")
+            # 녹화 오류 시 자동으로 녹화 중지
+            stop_recording()
+
 def create_templates():
     """HTML 템플릿 생성"""
     os.makedirs('templates', exist_ok=True)
@@ -793,6 +938,24 @@ def create_templates():
         }
         .btn.optimize:hover {
             background: #f57c00;
+        }
+        .btn.record {
+            background: #e91e63;
+        }
+        .btn.record:hover {
+            background: #c2185b;
+        }
+        .btn.record.recording {
+            background: #f44336;
+            animation: pulse 1s infinite;
+        }
+        .btn.record.recording:hover {
+            background: #da190b;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
         }
         .camera-container {
             display: flex;
@@ -901,6 +1064,21 @@ def create_templates():
         .optimization-info li {
             margin: 5px 0;
         }
+        .recording-status {
+            background: rgba(233,30,99,0.2);
+            border: 1px solid #e91e63;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .recording-status h4 {
+            margin: 0 0 10px 0;
+            color: #e91e63;
+        }
+        .recording-info {
+            font-size: 16px;
+        }
     </style>
 </head>
 <body>
@@ -924,6 +1102,7 @@ def create_templates():
             <button class="btn" onclick="startCamera()">📹 카메라 시작</button>
             <button class="btn stop" onclick="stopCamera()">⏹️ 카메라 중지</button>
             <button class="btn optimize" onclick="optimizeFocus()">🎯 초점 최적화</button>
+            <button class="btn record" id="recordBtn" onclick="toggleRecording()" disabled>🔴 녹화 시작</button>
         </div>
         
         <div class="camera-container">
@@ -945,11 +1124,19 @@ def create_templates():
         <div class="status" id="status">
             <div>상태: <span id="statusText">대기 중</span></div>
         </div>
+        
+        <div class="recording-status" id="recordingStatus" style="display: none;">
+            <div class="recording-info">
+                <h4>🎥 녹화 상태</h4>
+                <div id="recordingInfo">녹화 중이 아닙니다.</div>
+            </div>
+        </div>
     </div>
 
     <script>
         let cameraActive = false;
         let updateInterval;
+        let recordingActive = false;
         
         function startCamera() {
             fetch('/start_camera')
@@ -959,6 +1146,8 @@ def create_templates():
                         cameraActive = true;
                         updateStatus('카메라 실행 중 (최적화 모드)', 'connected');
                         startFrameUpdates();
+                        // 녹화 버튼 활성화
+                        document.getElementById('recordBtn').disabled = false;
                     }
                     alert(data.message);
                 })
@@ -975,6 +1164,17 @@ def create_templates():
                     cameraActive = false;
                     updateStatus('카메라 중지됨', 'disconnected');
                     stopFrameUpdates();
+                    
+                    // 녹화 중인 경우 녹화 중지
+                    if (recordingActive) {
+                        stopRecording();
+                    }
+                    
+                    // 녹화 버튼 비활성화
+                    document.getElementById('recordBtn').disabled = true;
+                    updateRecordButton(false);
+                    hideRecordingStatus();
+                    
                     alert(data.message);
                 })
                 .catch(error => {
@@ -990,6 +1190,93 @@ def create_templates():
         
         function startFrameUpdates() {
             updateInterval = setInterval(updateFrame, 100); // 100ms마다 업데이트
+        }
+        
+        function toggleRecording() {
+            if (!recordingActive) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        }
+        
+        function startRecording() {
+            fetch('/start_recording')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        recordingActive = true;
+                        updateRecordButton(true);
+                        showRecordingStatus();
+                        updateRecordingInfo(data.message);
+                    } else {
+                        alert(data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('녹화 시작 중 오류가 발생했습니다.');
+                });
+        }
+        
+        function stopRecording() {
+            fetch('/stop_recording')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        recordingActive = false;
+                        updateRecordButton(false);
+                        updateRecordingInfo(data.message);
+                        setTimeout(() => {
+                            hideRecordingStatus();
+                        }, 3000);
+                    } else {
+                        alert(data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('녹화 중지 중 오류가 발생했습니다.');
+                });
+        }
+        
+        function updateRecordButton(isRecording) {
+            const recordBtn = document.getElementById('recordBtn');
+            if (isRecording) {
+                recordBtn.textContent = '⏹️ 녹화 중지';
+                recordBtn.classList.add('recording');
+            } else {
+                recordBtn.textContent = '🔴 녹화 시작';
+                recordBtn.classList.remove('recording');
+            }
+        }
+        
+        function showRecordingStatus() {
+            document.getElementById('recordingStatus').style.display = 'block';
+        }
+        
+        function hideRecordingStatus() {
+            document.getElementById('recordingStatus').style.display = 'none';
+        }
+        
+        function updateRecordingInfo(message) {
+            document.getElementById('recordingInfo').textContent = message;
+        }
+        
+        function updateRecordingStatus() {
+            fetch('/recording_status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.recording) {
+                        recordingActive = true;
+                        updateRecordButton(true);
+                        showRecordingStatus();
+                        updateRecordingInfo(data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error('Recording status error:', error);
+                });
         }
         
         function stopFrameUpdates() {
@@ -1055,6 +1342,8 @@ def create_templates():
         // 페이지 로드 시 상태 초기화
         document.addEventListener('DOMContentLoaded', function() {
             updateStatus('대기 중', 'disconnected');
+            // 녹화 상태 확인
+            updateRecordingStatus();
         });
     </script>
 </body>
