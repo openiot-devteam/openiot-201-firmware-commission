@@ -6,3 +6,4 @@ picamera2
 flask
 pillow
 qrcode[pil]
+paho-mqtt

@@ -27,6 +27,7 @@ import os
 import uuid
 import subprocess
 from datetime import datetime
+import paho.mqtt.client as mqtt
 
 app = Flask(__name__)
 
@@ -52,6 +53,157 @@ hls_dir = os.path.abspath(os.path.join(os.getcwd(), 'hls'))
 hls_httpd_server = None
 hls_httpd_thread = None
 hls_http_port = 8090
+
+# --- MQTT 설정 ---
+MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', '127.0.0.1')
+MQTT_BROKER_PORT = int(os.getenv('MQTT_BROKER_PORT', '1883'))
+# 쉼표로 구분된 토픽 목록 환경변수 지원. 기본 예시 토픽들.
+MQTT_TOPICS = [t.strip() for t in os.getenv('MQTT_TOPICS', 'things/+/command/req,things/+/status/req,+/queue').split(',') if t.strip()]
+_mqtt_client = None
+
+def extract_json_from_raw(raw_string: str):
+    try:
+        start_brace = raw_string.find('{')
+        end_brace = raw_string.rfind('}')
+        if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+            return raw_string[start_brace:end_brace + 1]
+        return None
+    except Exception:
+        return None
+
+def mqtt_on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print(f"[MQTT] 연결 성공 → {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
+        for topic in MQTT_TOPICS:
+            try:
+                client.subscribe(topic, qos=1)
+                print(f"[MQTT] 구독: {topic}")
+            except Exception as e:
+                print(f"[MQTT] 구독 실패: {topic} → {e}")
+    else:
+        print(f"[MQTT] 연결 실패: rc={rc}")
+
+def mqtt_on_message(client, userdata, msg):
+    global camera_frame
+    try:
+        raw = msg.payload.decode('utf-8', 'ignore')
+    except Exception:
+        raw = str(msg.payload)
+    print(f"[MQTT] 수신 [{msg.topic}]: {raw}")
+
+    # JSON 파싱 시도 (중괄호만 추출 후 로드)
+    data = None
+    try:
+        json_part = extract_json_from_raw(raw)
+        if json_part:
+            data = json.loads(json_part)
+    except Exception:
+        data = None
+
+    topic = msg.topic or ''
+    topic_lower = topic.lower()
+
+    # things/{thing_name}/command/req 패턴의 간단 명령 처리
+    if topic_lower.endswith('/command/req'):
+        cmd = ''
+        if isinstance(data, dict):
+            cmd = str(data.get('command', '')).lower()
+
+        # HLS 시작
+        if cmd in ['hls_on', 'hls_start']:
+            # width/height 추정: payload의 frame(예: "1280x720") → camera_frame → 기본값
+            width, height = 1280, 720
+            try:
+                if isinstance(data, dict) and 'frame' in data:
+                    frame_val = str(data['frame']).lower().replace(' ', '')
+                    if 'x' in frame_val:
+                        w_str, h_str = frame_val.split('x', 1)
+                        width, height = int(w_str), int(h_str)
+                elif camera_frame is not None:
+                    height, width = camera_frame.shape[:2]
+            except Exception:
+                pass
+
+            # FPS 결정: payload의 fps → 기본 20
+            fps = 20
+            try:
+                if isinstance(data, dict) and 'fps' in data:
+                    fps = max(1, int(data['fps']))
+            except Exception:
+                pass
+
+            try:
+                start_hls_http_server()
+                start_hls_pipeline(int(width), int(height), int(fps))
+                print('[CMD] HLS 시작')
+            except Exception as e:
+                print(f"[CMD] HLS 시작 실패: {e}")
+            return
+
+        # HLS 중지 요청은 무시하고 항상 유지(참고 동작)
+        if cmd in ['hls_off', 'hls_stop']:
+            try:
+                # 항상 켜짐: 요청이 와도 유지하도록 보장
+                if camera_frame is not None:
+                    h, w = camera_frame.shape[:2]
+                    start_hls_http_server()
+                    start_hls_pipeline(int(w), int(h), 20)
+                else:
+                    start_hls_http_server()
+                    start_hls_pipeline(1280, 720, 20)
+            except Exception:
+                pass
+            print('[CMD] HLS 항상 켜짐: 중지 요청 무시하고 유지')
+            return
+
+        if cmd in ['start_recording', 'record_on']:
+            try:
+                if camera_frame is not None:
+                    ok, msg_text = start_recording(camera_frame)
+                    print(f"[CMD] 녹화 시작: {ok} {msg_text}")
+                else:
+                    print('[CMD] 녹화 시작 실패: 카메라 프레임 없음')
+            except Exception as e:
+                print(f"[CMD] 녹화 시작 실패: {e}")
+            return
+
+        if cmd in ['stop_recording', 'record_off']:
+            ok, msg_text = stop_recording()
+            print(f"[CMD] 녹화 중지: {ok} {msg_text}")
+            return
+
+        # 아직 지원하지 않는 명령들 (camera_on/off 등)
+        if cmd:
+            print(f"[CMD] 미지원 명령: {cmd}")
+        else:
+            print('[CMD] command 필드가 없습니다.')
+        return
+
+    # 상태/큐 요청은 현재 로깅만 수행
+    if topic_lower.endswith('/status/req'):
+        print('[STATUS] 상태 요청 수신 (응답 로직은 미구현)')
+        return
+    if topic_lower.endswith('/queue'):
+        print('[QUEUE] 큐 메시지 수신 (처리 로직은 미구현)')
+        return
+
+def start_mqtt_subscriber():
+    global _mqtt_client
+    try:
+        client_id = f"main_subscriber_{socket.gethostname()}"
+    except Exception:
+        client_id = f"main_subscriber_{uuid.uuid4()}"
+    client = mqtt.Client(client_id=client_id)
+    client.on_connect = mqtt_on_connect
+    client.on_message = mqtt_on_message
+    try:
+        client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
+        client.loop_start()
+        print(f"[MQTT] 브로커 연결 시도: {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
+        _mqtt_client = client
+    except Exception as e:
+        print(f"[MQTT] 연결 실패: {e}")
+        _mqtt_client = None
 
 def get_client_ip():
     """클라이언트 IP 주소를 가져오는 함수"""
@@ -1899,6 +2051,12 @@ def main():
     print("=== 웹 기반 카메라 QR 스캐너 시스템 ===")
     print("웹 브라우저에서 카메라 화면을 실시간으로 확인할 수 있습니다.")
     
+    # MQTT 구독자 시작 (백그라운드 루프)
+    try:
+        start_mqtt_subscriber()
+    except Exception as e:
+        print(f"[MQTT] 시작 실패: {e}")
+
     # HTML 템플릿 생성
     create_templates()
     
