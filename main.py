@@ -1383,6 +1383,11 @@ def create_templates():
                         setTimeout(() => {
                             hideRecordingStatus();
                         }, 3000);
+                        
+                        // 녹화 완료 후 파일 목록 새로고침
+                        setTimeout(() => {
+                            refreshRecordings();
+                        }, 1000);
                     } else {
                         alert(data.message);
                     }
@@ -1497,7 +1502,100 @@ def create_templates():
             updateStatus('대기 중', 'disconnected');
             // 녹화 상태 확인
             updateRecordingStatus();
+            // 녹화 파일 목록 로드
+            refreshRecordings();
         });
+        
+        // 녹화 파일 목록 관련 함수들
+        function refreshRecordings() {
+            fetch('/list_recordings')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        displayRecordings(data.files);
+                    } else {
+                        console.error('녹화 파일 목록 조회 실패:', data.message);
+                        document.getElementById('recordingsList').innerHTML = 
+                            '<div class="error">녹화 파일 목록을 불러올 수 없습니다.</div>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('recordingsList').innerHTML = 
+                        '<div class="error">녹화 파일 목록을 불러올 수 없습니다.</div>';
+                });
+        }
+        
+        function displayRecordings(files) {
+            const container = document.getElementById('recordingsList');
+            
+            if (files.length === 0) {
+                container.innerHTML = '<div class="loading">녹화된 파일이 없습니다.</div>';
+                return;
+            }
+            
+            let html = '';
+            files.forEach(file => {
+                html += `
+                    <div class="recording-item">
+                        <div class="recording-info-left">
+                            <div class="recording-filename">${file.filename}</div>
+                            <div class="recording-details">
+                                크기: ${file.size_mb}MB | 생성: ${file.created_time}
+                            </div>
+                        </div>
+                        <div class="recording-info-right">
+                            <div class="recording-actions">
+                                <button class="btn small play" onclick="playRecording('${file.filename}')">▶️ 재생</button>
+                                <button class="btn small" onclick="downloadRecording('${file.filename}')">📥 다운로드</button>
+                                <button class="btn small delete" onclick="deleteRecording('${file.filename}')">🗑️ 삭제</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        function playRecording(filename) {
+            // 브라우저에서 비디오 재생 (새 탭에서 열기)
+            window.open(`./${filename}`, '_blank');
+        }
+        
+        function downloadRecording(filename) {
+            // 파일 다운로드 링크 생성
+            const link = document.createElement('a');
+            link.href = `./${filename}`;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        
+        function deleteRecording(filename) {
+            if (confirm(`정말로 "${filename}" 파일을 삭제하시겠습니까?`)) {
+                fetch(`/delete_recording/${filename}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            alert(data.message);
+                            refreshRecordings(); // 목록 새로고침
+                        } else {
+                            alert(data.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('파일 삭제 중 오류가 발생했습니다.');
+                    });
+            }
+        }
+        
+        function downloadAllRecordings() {
+            // 녹화된 모든 파일을 ZIP으로 다운로드하는 기능
+            alert('전체 다운로드 기능은 개발 중입니다. 개별 파일을 다운로드해주세요.');
+        }
     </script>
 </body>
 </html>'''
