@@ -1675,7 +1675,6 @@ class RemoteMQTTClient:
             # Optical Flow 토글
             if 'opt_flow' in update_dict:
                 try:
-                    global camera_thread
                     val = str(update_dict['opt_flow']).lower()
                     from_values = {'on': True, 'off': False, 'true': True, 'false': False, '1': True, '0': False}
                     prev = bool(of_enabled)
