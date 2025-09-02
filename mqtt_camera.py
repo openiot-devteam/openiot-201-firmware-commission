@@ -2537,6 +2537,15 @@ def camera_on(SCHEDULE_DURATION_SEC=None):
         except Exception:
             pass
         picam2.close()
+        # HLS 정지
+        try:
+            stop_hls_pipeline()
+        except Exception:
+            pass
+        try:
+            stop_hls_http_server()
+        except Exception:
+            pass
         if len(segment_infos) > 0:
             print(f'▶ 세션 종료: {len(segment_infos)}개 세그먼트 저장 완료, RTSP: rtsp://127.0.0.1:8554{rtsp_path}')
         else:
