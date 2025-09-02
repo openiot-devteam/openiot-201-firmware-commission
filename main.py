@@ -193,6 +193,7 @@ def start_mqtt_subscriber():
         client_id = f"main_subscriber_{socket.gethostname()}"
     except Exception:
         client_id = f"main_subscriber_{uuid.uuid4()}"
+    print("client_id", client_id)
     client = mqtt.Client(client_id=client_id)
     client.on_connect = mqtt_on_connect
     client.on_message = mqtt_on_message
