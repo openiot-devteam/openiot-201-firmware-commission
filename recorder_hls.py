@@ -70,36 +70,70 @@ appsrc = None
 def build_pipeline():
     """
     Build a single GStreamer pipeline:
-      appsrc (RGB) -> videoconvert -> x264enc -> h264parse -> tee name=t
-        t. -> queue -> mp4mux faststart=true -> filesink
-        t. -> queue -> mpegtsmux -> hlssink (playlist + segments)
+      appsrc (RGB) -> videoconvert -> x264enc -> h264parse -> mp4mux -> filesink
     """
     Gst.init(None)
     
-    # 더 안정적인 파이프라인 구조
-    pipeline_str = f"""
-        appsrc name=src is-live=true format=time do-timestamp=true
-               caps=video/x-raw,format=RGB,width={WIDTH},height={HEIGHT},framerate={FPS}/1 ! 
-        videoconvert ! 
-        video/x-raw,format=I420 ! 
-        x264enc tune=zerolatency speed-preset=veryfast bitrate={BITRATE_KBPS} key-int-max={FPS*2} ! 
-        h264parse config-interval=1 ! 
-        tee name=t
-            t. ! queue leaky=2 max-size-buffers=0 max-size-bytes=0 max-size-time=2000000000 ! 
-                 mp4mux faststart=true ! 
-                 filesink location="{MP4_PATH}" sync=false
-            t. ! queue leaky=2 max-size-buffers=0 max-size-bytes=0 max-size-time=2000000000 ! 
-                 mpegtsmux alignment=7 name=tsmux ! 
-                 hlssink name=hsink max-files={HLS_MAX_FILES} playlist-length={HLS_PLAYLIST_LENGTH} target-duration={HLS_TARGET_DURATION}
-                        location="{HLS_SEGMENT_PATTERN}" playlist-location="{HLS_PLAYLIST}"
-    """
+    print("[DEBUG] Building simple MP4 recording pipeline...")
     
-    print(f"[DEBUG] Pipeline: {pipeline_str}")
+    # 파이프라인을 단계별로 빌드
+    pipe = Gst.Pipeline()
     
-    pipe = Gst.parse_launch(pipeline_str)
-    src = pipe.get_by_name("src")
-    if src is None:
-        raise RuntimeError("Failed to build pipeline: 'src' not found")
+    # 요소들 생성
+    src = Gst.ElementFactory.make("appsrc", "src")
+    convert = Gst.ElementFactory.make("videoconvert", "convert")
+    encoder = Gst.ElementFactory.make("x264enc", "encoder")
+    parser = Gst.ElementFactory.make("h264parse", "parser")
+    muxer = Gst.ElementFactory.make("mp4mux", "muxer")
+    sink = Gst.ElementFactory.make("filesink", "sink")
+    
+    # 요소들이 제대로 생성되었는지 확인
+    elements = [src, convert, encoder, parser, muxer, sink]
+    for elem in elements:
+        if elem is None:
+            raise RuntimeError(f"Failed to create element: {elem}")
+    
+    print("[DEBUG] All elements created successfully")
+    
+    # AppSrc 설정
+    src.set_property("is-live", True)
+    src.set_property("format", Gst.Format.TIME)
+    src.set_property("do-timestamp", True)
+    
+    caps = Gst.Caps.from_string(f"video/x-raw,format=RGB,width={WIDTH},height={HEIGHT},framerate={FPS}/1")
+    src.set_property("caps", caps)
+    
+    # x264enc 설정
+    encoder.set_property("tune", "zerolatency")
+    encoder.set_property("speed-preset", "veryfast")
+    encoder.set_property("bitrate", BITRATE_KBPS)
+    encoder.set_property("key-int-max", FPS * 2)
+    
+    # MP4 muxer 설정
+    muxer.set_property("faststart", True)
+    
+    # 파일 sink 설정
+    sink.set_property("location", str(MP4_PATH))
+    sink.set_property("sync", False)
+    
+    print("[DEBUG] Adding elements to pipeline...")
+    # 파이프라인에 요소들 추가
+    pipe.add(src)
+    pipe.add(convert)
+    pipe.add(encoder)
+    pipe.add(parser)
+    pipe.add(muxer)
+    pipe.add(sink)
+    
+    print("[DEBUG] Linking elements...")
+    # 요소들 연결
+    src.link(convert)
+    convert.link(encoder)
+    encoder.link(parser)
+    parser.link(muxer)
+    muxer.link(sink)
+    
+    print("[DEBUG] Pipeline built successfully")
     
     # 파이프라인 상태 변경을 위한 콜백 설정
     bus = pipe.get_bus()
@@ -246,10 +280,7 @@ def run():
         print("[DEBUG] Producer thread started")
 
         print(f"[INFO] Recording MP4 to: {MP4_PATH}")
-        print(f"[INFO] HLS playlist: {HLS_PLAYLIST}")
-        print(f"[INFO] HLS segments: {HLS_SEGMENT_PATTERN}")
-        print(f"[INFO] Serve HLS with (dev): python3 -m http.server -d {HLS_DIR} 8000")
-        print(f"[INFO] Then open: http://<host>:8000/stream.m3u8")
+        print("[INFO] Simple MP4 recording pipeline started")
 
         # 메인 루프 - stop_event가 설정될 때까지 대기
         print("[DEBUG] Entering main loop...")
