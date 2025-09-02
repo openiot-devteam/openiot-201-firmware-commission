@@ -227,8 +227,12 @@ def run():
         ret = pipeline.get_state(10 * Gst.SECOND)
         if ret[0] == Gst.StateChangeReturn.FAILURE:
             raise RuntimeError("Pipeline failed to reach PLAYING state")
-        elif ret[0] == Gst.StateChangeReturn.TIMEOUT:
-            raise RuntimeError("Pipeline state change timed out")
+        elif ret[0] == Gst.StateChangeReturn.ASYNC:
+            print("[DEBUG] Pipeline state change is async, waiting...")
+            # ASYNC 상태인 경우 추가 대기
+            ret = pipeline.get_state(Gst.CLOCK_TIME_NONE)
+            if ret[0] != Gst.StateChangeReturn.SUCCESS:
+                raise RuntimeError(f"Pipeline failed to reach PLAYING state: {ret[0]}")
         
         print(f"[DEBUG] Pipeline state: {ret[0].value_name}")
         
