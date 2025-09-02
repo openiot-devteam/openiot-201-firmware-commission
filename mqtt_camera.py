@@ -18,6 +18,9 @@ from functools import partial
  
 # import RPi.GPIO as GPIO
 import gi
+gi.require_version('Gst', '1.0')
+gi.require_version('GstRtspServer', '1.0')
+gi.require_version('GstApp', '1.0')
 from gi.repository import Gst, GstRtspServer, GObject, GstApp
 from gpiozero import LED, Button  # type: ignore
 from picamera2 import Picamera2, Preview  # type: ignore
@@ -1538,6 +1541,22 @@ class RemoteMQTTClient:
                 elif cmd in ['stop_recording', 'record_off']:
                     ok, msg_text = stop_recording_manual()
                     print(f"[CMD] 녹화 중지: {ok} {msg_text}")
+                elif cmd in ['camera_on']:
+                    try:
+                        global camera_thread
+                        if camera_thread is None or not camera_thread.is_alive():
+                            camera_stop_event.clear()
+                            camera_thread = threading.Thread(target=lambda: camera_on(), daemon=True)
+                            camera_thread.start()
+                            print('[CMD] camera_on 시작')
+                    except Exception as e:
+                        print(f"[CMD] camera_on 실패: {e}")
+                elif cmd in ['camera_off']:
+                    try:
+                        camera_stop_event.set()
+                        print('[CMD] camera_off 요청')
+                    except Exception as e:
+                        print(f"[CMD] camera_off 실패: {e}")
                 else:
                     # 기존 처리기로 전달
                     self.process_command_request(data)
