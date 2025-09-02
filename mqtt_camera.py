@@ -499,50 +499,78 @@ def start_hls_http_server(port: int = None):
     if hls_httpd_server is not None:
         return
     ensure_hls_dir()
-    # 기본 index.html 자동 생성
+    # 기본 index.html 생성/업데이트 (항상 최신 템플릿으로 갱신)
     try:
         index_path = os.path.join(hls_dir, 'index.html')
-        if (not os.path.exists(index_path)):
-            html = """<!DOCTYPE html>
+        html = """<!DOCTYPE html>
 <html lang=\"ko\">
 <head>
   <meta charset=\"UTF-8\"/>
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>
-  <title>HLS 스트리밍</title>
+  <title>HLS 스트리밍 뷰어</title>
   <style>
-    body{margin:0;padding:20px;font-family:system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial}
+    :root{color-scheme:light dark}
+    body{margin:0;padding:24px;font-family:system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial}
     .wrap{max-width:960px;margin:0 auto}
-    h1{margin:0 0 16px}
-    video{width:100%;max-height:70vh;background:#000;border-radius:8px}
-    .hint{margin-top:12px;color:#555}
+    h1{margin:0 0 16px;font-size:22px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0 16px}
+    label{font-weight:600}
+    input,select,button{font:inherit;padding:6px 10px;border-radius:6px;border:1px solid #8888}
+    video{width:100%;max-height:72vh;background:#000;border-radius:8px}
+    .hint{margin-top:10px;color:#888}
   </style>
   <script src=\"https://cdn.jsdelivr.net/npm/hls.js@latest\"></script>
   </head>
 <body>
   <div class=\"wrap\">
-    <h1>HLS 스트리밍</h1>
+    <h1>HLS 스트리밍 뷰어</h1>
+    <div class=\"row\">
+      <label for=\"url\">재생 URL</label>
+      <input id=\"url\" size=\"50\" value=\"index.m3u8\" />
+      <button id=\"play\">재생</button>
+      <button id=\"mute\">음소거 토글</button>
+    </div>
     <video id=\"video\" controls autoplay muted playsinline></video>
-    <div class=\"hint\">재생 URL: index.m3u8 (이 페이지는 mqtt_camera가 자동 생성했습니다)</div>
+    <div class=\"hint\">기본 URL은 같은 서버의 <code>index.m3u8</code> 입니다. 다른 장비에서 접속 시 <code>http://호스트:8090/index.m3u8</code>를 입력하세요.</div>
   </div>
   <script>
     const video = document.getElementById('video');
-    const src = 'index.m3u8';
-    if (Hls.isSupported()) {
-      const hls = new Hls({maxBufferLength:10});
-      hls.loadSource(src);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, function(){ video.play(); });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = src;
-      video.addEventListener('loadedmetadata', function() { video.play(); });
-    } else {
-      document.body.insertAdjacentHTML('beforeend', '<p>HLS를 재생할 수 없는 브라우저입니다.</p>');
+    const urlInput = document.getElementById('url');
+    const playBtn = document.getElementById('play');
+    const muteBtn = document.getElementById('mute');
+
+    function play(src){
+      if(!src) return;
+      if (Hls.isSupported()) {
+        if (window._hls) { try { window._hls.destroy(); } catch(e){} }
+        const hls = new Hls({
+          maxBufferLength: 8,
+          liveSyncDuration: 3,
+          enableWorker: true
+        });
+        window._hls = hls;
+        hls.loadSource(src);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, function(){
+          video.play().catch(()=>{});
+        });
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = src;
+        video.addEventListener('loadedmetadata', function() { video.play().catch(()=>{}); });
+      } else {
+        alert('이 브라우저는 HLS 재생을 지원하지 않습니다. 다른 브라우저를 사용하세요.');
+      }
     }
+
+    playBtn.addEventListener('click', ()=> play(urlInput.value.trim()));
+    muteBtn.addEventListener('click', ()=> { video.muted = !video.muted; });
+    // 초기 자동 재생 시도
+    play(urlInput.value.trim());
   </script>
-</body>
+  </body>
 </html>"""
-            with open(index_path, 'w', encoding='utf-8') as f:
-                f.write(html)
+        with open(index_path, 'w', encoding='utf-8') as f:
+            f.write(html)
     except Exception:
         pass
     class HLSHandler(SimpleHTTPRequestHandler):
