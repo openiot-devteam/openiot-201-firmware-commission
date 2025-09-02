@@ -131,14 +131,36 @@ def on_bus_message(bus, message, pipeline):
 
 def start_camera():
     """Start Picamera2 in RGB format matching WIDTH/HEIGHT/FPS."""
-    cam = Picamera2()
-    preview_config = cam.create_preview_configuration(
-        main={"size": (WIDTH, HEIGHT), "format": "RGB888"}
-    )
-    cam.configure(preview_config)
-    cam.start()
-    time.sleep(1.0)  # warm-up 시간 증가
-    return cam
+    try:
+        print(f"[DEBUG] Initializing Picamera2 with {WIDTH}x{HEIGHT} @ {FPS}fps")
+        cam = Picamera2()
+        
+        print("[DEBUG] Creating preview configuration...")
+        preview_config = cam.create_preview_configuration(
+            main={"size": (WIDTH, HEIGHT), "format": "RGB888"}
+        )
+        
+        print("[DEBUG] Configuring camera...")
+        cam.configure(preview_config)
+        
+        print("[DEBUG] Starting camera...")
+        cam.start()
+        
+        print("[DEBUG] Waiting for camera warm-up...")
+        time.sleep(1.0)  # warm-up 시간
+        
+        # 카메라가 실제로 작동하는지 테스트
+        print("[DEBUG] Testing camera capture...")
+        test_frame = cam.capture_array("main")
+        print(f"[DEBUG] Test frame shape: {test_frame.shape}, dtype: {test_frame.dtype}")
+        
+        return cam
+        
+    except Exception as e:
+        print(f"[ERROR] Camera initialization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 def push_frames_loop(cam):
@@ -191,21 +213,33 @@ def run():
     global pipeline, appsrc, producer_thread
 
     try:
+        print("[DEBUG] Building pipeline...")
         pipeline, appsrc = build_pipeline()
         
+        print("[DEBUG] Setting pipeline to PLAYING state...")
         # 파이프라인 상태를 PLAYING으로 설정
         ret = pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
             raise RuntimeError("Failed to set pipeline to PLAYING state")
         
-        # 파이프라인이 PLAYING 상태가 될 때까지 대기
-        ret = pipeline.get_state(Gst.CLOCK_TIME_NONE)
-        if ret[0] != Gst.StateChangeReturn.SUCCESS:
-            raise RuntimeError(f"Pipeline failed to reach PLAYING state: {ret[0]}")
-
+        print("[DEBUG] Waiting for pipeline to reach PLAYING state...")
+        # 파이프라인이 PLAYING 상태가 될 때까지 대기 (타임아웃 10초)
+        ret = pipeline.get_state(10 * Gst.SECOND)
+        if ret[0] == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("Pipeline failed to reach PLAYING state")
+        elif ret[0] == Gst.StateChangeReturn.TIMEOUT:
+            raise RuntimeError("Pipeline state change timed out")
+        
+        print(f"[DEBUG] Pipeline state: {ret[0].value_name}")
+        
+        print("[DEBUG] Starting camera...")
         cam = start_camera()
+        print("[DEBUG] Camera started successfully")
+        
+        print("[DEBUG] Starting producer thread...")
         producer_thread = threading.Thread(target=push_frames_loop, args=(cam,), daemon=True)
         producer_thread.start()
+        print("[DEBUG] Producer thread started")
 
         print(f"[INFO] Recording MP4 to: {MP4_PATH}")
         print(f"[INFO] HLS playlist: {HLS_PLAYLIST}")
@@ -214,11 +248,14 @@ def run():
         print(f"[INFO] Then open: http://<host>:8000/stream.m3u8")
 
         # 메인 루프 - stop_event가 설정될 때까지 대기
+        print("[DEBUG] Entering main loop...")
         while not stop_event.is_set():
             time.sleep(0.1)
             
     except Exception as e:
         print(f"[ERROR] Pipeline failed: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         cleanup()
 
