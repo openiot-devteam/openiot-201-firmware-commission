@@ -380,6 +380,23 @@ def start_hls_http_server(port: int = None):
     class HLSHandler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=hls_dir, **kwargs)
+        def end_headers(self):
+            try:
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+                self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type, Origin, Accept')
+            except Exception:
+                pass
+            super().end_headers()
+        def do_OPTIONS(self):
+            try:
+                self.send_response(204)
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+                self.send_header('Access-Control-Allow-Headers', 'Range, Content-Type, Origin, Accept')
+                self.end_headers()
+            except Exception:
+                pass
     try:
         hls_httpd_server = ThreadingHTTPServer(("0.0.0.0", int(port)), HLSHandler)
         hls_httpd_thread = threading.Thread(target=hls_httpd_server.serve_forever, daemon=True)
@@ -2096,6 +2113,20 @@ def main():
         start_mqtt_subscriber()
     except Exception as e:
         print(f"[MQTT] 시작 실패: {e}")
+
+    # 부팅 시 HLS HTTP 서버 및 파이프라인 시작 (환경변수로 제어)
+    try:
+        auto_hls = os.getenv('HLS_AUTO_START', 'true').lower() in ('1','true','yes')
+        if auto_hls:
+            # 기본값 또는 환경변수로 제어
+            w = int(os.getenv('HLS_WIDTH', '1280'))
+            h = int(os.getenv('HLS_HEIGHT', '720'))
+            fps = int(os.getenv('HLS_FPS', '20'))
+            start_hls_http_server()
+            start_hls_pipeline(w, h, fps)
+            print(f"[HLS] 자동 시작 완료: {w}x{h}@{fps}")
+    except Exception as e:
+        print(f"[HLS] 자동 시작 실패: {e}")
 
     # HTML 템플릿 생성
     create_templates()

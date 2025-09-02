@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>카메라 HLS 스트리밍</title>
+  <style>
+    body { margin:0; padding:24px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial; background:#111; color:#eee; }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    h1 { margin: 0 0 16px; font-size: 20px; }
+    .grid { display:grid; gap:12px; }
+    video { width: 100%; max-height: 75vh; background:#000; border-radius:12px; outline:none; }
+    .hint { color:#aaa; font-size: 13px; }
+    .err { color:#ff7a7a; white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>카메라 HLS 스트리밍</h1>
+
+    <div class="grid">
+      <video id="player" controls autoplay muted playsinline></video>
+      <div class="hint">
+        재생 URL: <code id="url"></code><br/>
+        - PC/안드로이드: Hls.js 사용<br/>
+        - iOS/Safari: 네이티브 HLS 자동 재생
+      </div>
+      <div class="err" id="error"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    // HLS m3u8 URL (필수: 실제 서버 IP/도메인으로 변경)
+    const HLS_URL = 'http://192.168.0.192:8090/index.m3u8';
+
+    // 표시용
+    document.getElementById('url').textContent = HLS_URL;
+
+    const video = document.getElementById('player');
+    const errorBox = document.getElementById('error');
+
+    function showError(e) {
+      console.error(e);
+      errorBox.textContent = `[재생 오류] ${e && e.message ? e.message : e}`;
+    }
+
+    (async function play() {
+      try {
+        if (window.Hls && Hls.isSupported()) {
+          const hls = new Hls({
+            maxBufferLength: 10,
+            liveSyncDurationCount: 3
+          });
+          hls.loadSource(HLS_URL);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.ERROR, (_, data) => {
+            if (data && data.fatal) showError(`Hls.js fatal: ${data.type}/${data.details}`);
+          });
+          hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(showError));
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = HLS_URL;
+          video.addEventListener('loadedmetadata', () => video.play().catch(showError));
+        } else {
+          showError('HLS를 지원하지 않는 브라우저입니다. 다른 브라우저를 사용해 주세요.');
+        }
+      } catch (e) {
+        showError(e);
+      }
+    })();
+  </script>
+</body>
+</html>
