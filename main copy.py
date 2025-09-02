@@ -15,11 +15,6 @@ import time
 import threading
 from picamera2 import Picamera2
 from flask import Flask, render_template, Response, jsonify
-import gi
-gi.require_version('Gst', '1.0')
-gi.require_version('GstApp', '1.0')
-from gi.repository import Gst, GstApp
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import base64
 from io import BytesIO
 from PIL import Image
@@ -43,15 +38,6 @@ recording = False
 video_writer = None
 recording_start_time = None
 recording_filename = None
-
-# HLS 관련 전역 변수
-hls_enabled = True
-hls_pipeline = None
-hls_appsrc = None
-hls_dir = os.path.abspath(os.path.join(os.getcwd(), 'hls'))
-hls_httpd_server = None
-hls_httpd_thread = None
-hls_http_port = 8090
 
 def get_client_ip():
     """클라이언트 IP 주소를 가져오는 함수"""
@@ -124,126 +110,6 @@ def get_mac_address():
         print(f"MAC 주소 가져오기 실패: {e}")
         # 기본 MAC 주소 반환
         return "00:00:00:00:00:00"
-
-# --- HLS helpers ---
-def ensure_hls_dir():
-    try:
-        os.makedirs(hls_dir, exist_ok=True)
-    except Exception:
-        pass
-
-def start_hls_http_server(port: int = None):
-    global hls_httpd_server, hls_httpd_thread
-    if port is None:
-        port = hls_http_port
-    if hls_httpd_server is not None:
-        return
-    ensure_hls_dir()
-    # 기본 index.html 자동 생성
-    try:
-        index_path = os.path.join(hls_dir, 'index.html')
-        if (not os.path.exists(index_path)):
-            html = """<!DOCTYPE html>
-<html lang=\"ko\">
-<head>
-  <meta charset=\"UTF-8\"/>
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>
-  <title>HLS 스트리밍</title>
-  <style>
-    body{margin:0;padding:20px;font-family:system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial}
-    .wrap{max-width:960px;margin:0 auto}
-    h1{margin:0 0 16px}
-    video{width:100%;max-height:70vh;background:#000;border-radius:8px}
-    .hint{margin-top:12px;color:#555}
-  </style>
-  <script src=\"https://cdn.jsdelivr.net/npm/hls.js@latest\"></script>
-  </head>
-<body>
-  <div class=\"wrap\">
-    <h1>HLS 스트리밍</h1>
-    <video id=\"video\" controls autoplay muted playsinline></video>
-    <div class=\"hint\">재생 URL: index.m3u8</div>
-  </div>
-  <script>
-    const video = document.getElementById('video');
-    const src = 'index.m3u8';
-    if (Hls.isSupported()) {
-      const hls = new Hls({maxBufferLength:10});
-      hls.loadSource(src);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, function(){ video.play(); });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = src;
-      video.addEventListener('loadedmetadata', function() { video.play(); });
-    } else {
-      document.body.insertAdjacentHTML('beforeend', '<p>HLS를 재생할 수 없는 브라우저입니다.</p>');
-    }
-  </script>
-</body>
-</html>"""
-            with open(index_path, 'w', encoding='utf-8') as f:
-                f.write(html)
-    except Exception:
-        pass
-    class HLSHandler(SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=hls_dir, **kwargs)
-    try:
-        hls_httpd_server = ThreadingHTTPServer(("0.0.0.0", int(port)), HLSHandler)
-        hls_httpd_thread = threading.Thread(target=hls_httpd_server.serve_forever, daemon=True)
-        hls_httpd_thread.start()
-        print(f"[HLS] HTTP 서버 시작: http://0.0.0.0:{port}/index.m3u8")
-    except Exception as e:
-        print(f"[HLS] HTTP 서버 시작 실패: {e}")
-        hls_httpd_server = None
-        hls_httpd_thread = None
-
-def stop_hls_http_server():
-    global hls_httpd_server, hls_httpd_thread
-    try:
-        if hls_httpd_server is not None:
-            hls_httpd_server.shutdown()
-            hls_httpd_server.server_close()
-    except Exception:
-        pass
-    hls_httpd_server = None
-    hls_httpd_thread = None
-
-def start_hls_pipeline(width: int, height: int, framerate: int):
-    global hls_pipeline, hls_appsrc
-    if not hls_enabled:
-        return
-    if hls_pipeline is not None:
-        return
-    ensure_hls_dir()
-    Gst.init(None)
-    kbps = 2000
-    launch = (
-        f"appsrc name=hls_src is-live=true format=time do-timestamp=true block=true "
-        f"caps=video/x-raw,format=RGB,width={width},height={height},framerate={framerate}/1 ! "
-        f"videoconvert ! video/x-raw,format=I420 ! "
-        f"x264enc tune=zerolatency key-int-max=60 bitrate={kbps} ! h264parse ! mpegtsmux ! "
-        f"hlssink name=hlsink target-duration=2 max-files=10 playlist-location={os.path.join(hls_dir, 'index.m3u8')} location={os.path.join(hls_dir, 'segment_%05d.ts')}"
-    )
-    try:
-        hls_pipeline = Gst.parse_launch(launch)
-        hls_appsrc = hls_pipeline.get_by_name('hls_src')
-        hls_pipeline.set_state(Gst.State.PLAYING)
-        print("[HLS] 파이프라인 시작")
-    except Exception as e:
-        print(f"[HLS] 파이프라인 시작 실패: {e}")
-        hls_pipeline = None
-        hls_appsrc = None
-
-def stop_hls_pipeline():
-    global hls_pipeline, hls_appsrc
-    try:
-        if hls_pipeline is not None:
-            hls_pipeline.set_state(Gst.State.NULL)
-    except Exception:
-        pass
-    hls_pipeline = None
-    hls_appsrc = None
 
 def parse_server_info(qr_data):
     """QR 코드 데이터에서 서버 정보를 파싱하는 함수"""
@@ -731,19 +597,6 @@ def camera_stream():
                 if recording:
                     write_frame_to_recording(frame)
                 
-                # HLS 프레임 푸시 (RGB)
-                try:
-                    if hls_appsrc is not None:
-                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        data = rgb.tobytes()
-                        buf = Gst.Buffer.new_allocate(None, len(data), None)
-                        buf.fill(0, data)
-                        # 간단 duration만 설정 (타임스탬프는 omit)
-                        buf.duration = int(1e9/20)
-                        hls_appsrc.emit('push-buffer', buf)
-                except Exception:
-                    pass
-
                 # 전역 변수 업데이트
                 camera_frame = frame.copy()
                 if new_qr_results:
@@ -869,11 +722,6 @@ def start_camera():
     
     if not camera_active:
         try:
-            # HLS 서버/파이프라인 준비
-            try:
-                start_hls_http_server()
-            except Exception:
-                pass
             camera_thread = threading.Thread(target=camera_stream, daemon=True)
             camera_thread.start()
             camera_active = True
@@ -892,11 +740,6 @@ def stop_camera():
     """카메라 중지"""
     global camera_active
     camera_active = False
-    try:
-        stop_hls_pipeline()
-        stop_hls_http_server()
-    except Exception:
-        pass
     return jsonify({'status': 'success', 'message': '카메라가 중지되었습니다.'})
 
 @app.route('/start_recording')
@@ -927,25 +770,6 @@ def recording_status_route():
     """녹화 상태 확인 API"""
     status = get_recording_status()
     return jsonify(status)
-
-@app.route('/hls_on')
-def hls_on_route():
-    try:
-        # 적당한 기본 해상도/프레임레이트로 시작 (현재 프레임 크기 알 수 없는 경우 가정)
-        start_hls_http_server()
-        start_hls_pipeline(1280, 720, 20)
-        return jsonify({'status': 'success', 'message': 'HLS가 시작되었습니다.'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': f'HLS 시작 실패: {e}'})
-
-@app.route('/hls_off')
-def hls_off_route():
-    try:
-        stop_hls_pipeline()
-        stop_hls_http_server()
-        return jsonify({'status': 'success', 'message': 'HLS가 중지되었습니다.'})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': f'HLS 중지 실패: {e}'})
 
 @app.route('/list_recordings')
 def list_recordings_route():
