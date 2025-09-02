@@ -834,6 +834,68 @@ def delete_recording_route(filename):
             'message': f'파일 삭제 실패: {e}'
         })
 
+@app.route('/download_recording/<filename>')
+def download_recording_route(filename):
+    """녹화 파일 다운로드 API"""
+    try:
+        # 보안: 파일명 검증
+        if not filename.startswith('recording_') or not filename.endswith('.mp4'):
+            return jsonify({
+                'status': 'error',
+                'message': '잘못된 파일명입니다.'
+            })
+        
+        file_path = os.path.join('.', filename)
+        if os.path.exists(file_path):
+            from flask import send_file
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name=filename,
+                mimetype='video/mp4'
+            )
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': '파일을 찾을 수 없습니다.'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'파일 다운로드 실패: {e}'
+        })
+
+@app.route('/play_recording/<filename>')
+def play_recording_route(filename):
+    """녹화 파일 재생 API"""
+    try:
+        # 보안: 파일명 검증
+        if not filename.startswith('recording_') or not filename.endswith('.mp4'):
+            return jsonify({
+                'status': 'error',
+                'message': '잘못된 파일명입니다.'
+            })
+        
+        file_path = os.path.join('.', filename)
+        if os.path.exists(file_path):
+            from flask import send_file
+            return send_file(
+                file_path,
+                mimetype='video/mp4'
+            )
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': '파일을 찾을 수 없습니다.'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'파일 재생 실패: {e}'
+        })
+
 def start_recording(frame):
     """녹화 시작"""
     global recording, video_writer, recording_start_time, recording_filename
@@ -1221,6 +1283,19 @@ def create_templates():
         .btn.delete:hover {
             background: #da190b;
         }
+        .recordings-summary {
+            background: rgba(76,175,80,0.2);
+            border: 1px solid #4CAF50;
+            border-radius: 10px;
+            padding: 10px;
+            margin: 15px 0;
+            text-align: center;
+        }
+        .summary-info {
+            font-size: 16px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
     </style>
 </head>
 <body>
@@ -1279,6 +1354,12 @@ def create_templates():
             <div class="recordings-controls">
                 <button class="btn refresh" onclick="refreshRecordings()">🔄 새로고침</button>
                 <button class="btn download" onclick="downloadAllRecordings()">📥 전체 다운로드</button>
+            </div>
+            <div class="recordings-summary" id="recordingsSummary" style="display: none;">
+                <div class="summary-info">
+                    <span id="fileCount">0개 파일</span> | 
+                    <span id="totalSize">총 0MB</span>
+                </div>
             </div>
             <div id="recordingsList" class="recordings-container">
                 <div class="loading">녹화된 파일을 불러오는 중...</div>
@@ -1531,24 +1612,36 @@ def create_templates():
             
             if (files.length === 0) {
                 container.innerHTML = '<div class="loading">녹화된 파일이 없습니다.</div>';
+                document.getElementById('recordingsSummary').style.display = 'none';
                 return;
             }
             
+            // 요약 정보 업데이트
+            updateRecordingsSummary(files);
+            
             let html = '';
             files.forEach(file => {
+                // 파일 크기를 보기 좋게 포맷팅
+                let sizeText = '';
+                if (file.size_mb >= 1024) {
+                    sizeText = `${(file.size_mb / 1024).toFixed(2)}GB`;
+                } else {
+                    sizeText = `${file.size_mb}MB`;
+                }
+                
                 html += `
                     <div class="recording-item">
                         <div class="recording-info-left">
                             <div class="recording-filename">${file.filename}</div>
                             <div class="recording-details">
-                                크기: ${file.size_mb}MB | 생성: ${file.created_time}
+                                📏 크기: ${sizeText} | 📅 생성: ${file.created_time}
                             </div>
                         </div>
                         <div class="recording-info-right">
                             <div class="recording-actions">
-                                <button class="btn small play" onclick="playRecording('${file.filename}')">▶️ 재생</button>
-                                <button class="btn small" onclick="downloadRecording('${file.filename}')">📥 다운로드</button>
-                                <button class="btn small delete" onclick="deleteRecording('${file.filename}')">🗑️ 삭제</button>
+                                <button class="btn small play" onclick="playRecording('${file.filename}')" title="브라우저에서 재생">▶️ 재생</button>
+                                <button class="btn small" onclick="downloadRecording('${file.filename}')" title="파일 다운로드">📥 다운로드</button>
+                                <button class="btn small delete" onclick="deleteRecording('${file.filename}')" title="파일 삭제">🗑️ 삭제</button>
                             </div>
                         </div>
                     </div>
@@ -1558,19 +1651,39 @@ def create_templates():
             container.innerHTML = html;
         }
         
+        function updateRecordingsSummary(files) {
+            const summaryDiv = document.getElementById('recordingsSummary');
+            const fileCountSpan = document.getElementById('fileCount');
+            const totalSizeSpan = document.getElementById('totalSize');
+            
+            if (files.length === 0) {
+                summaryDiv.style.display = 'none';
+                return;
+            }
+            
+            // 총 파일 크기 계산
+            const totalSizeMB = files.reduce((sum, file) => sum + file.size_mb, 0);
+            
+            // 파일 개수와 총 크기 표시
+            fileCountSpan.textContent = `${files.length}개 파일`;
+            
+            if (totalSizeMB >= 1024) {
+                totalSizeSpan.textContent = `총 ${(totalSizeMB / 1024).toFixed(2)}GB`;
+            } else {
+                totalSizeSpan.textContent = `총 ${totalSizeMB.toFixed(2)}MB`;
+            }
+            
+            summaryDiv.style.display = 'block';
+        }
+        
         function playRecording(filename) {
             // 브라우저에서 비디오 재생 (새 탭에서 열기)
-            window.open(`./${filename}`, '_blank');
+            window.open(`/play_recording/${filename}`, '_blank');
         }
         
         function downloadRecording(filename) {
-            // 파일 다운로드 링크 생성
-            const link = document.createElement('a');
-            link.href = `./${filename}`;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            // Flask API를 통한 파일 다운로드
+            window.open(`/download_recording/${filename}`, '_blank');
         }
         
         function deleteRecording(filename) {
