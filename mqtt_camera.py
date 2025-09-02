@@ -1528,9 +1528,17 @@ class RemoteMQTTClient:
                     start_hls_pipeline(w, h, int(current_fps), int(current_bitrate//1000))
                     print('[CMD] HLS 시작')
                 elif cmd in ['hls_off', 'hls_stop']:
-                    stop_hls_pipeline()
-                    stop_hls_http_server()
-                    print('[CMD] HLS 중지')
+                    # 항상 켜짐: 중지 요청 무시하고 유지
+                    try:
+                        w, h = [int(v) for v in str(current_frame).split('x')]
+                    except Exception:
+                        w, h = 1280, 720
+                    try:
+                        start_hls_http_server()
+                        start_hls_pipeline(w, h, int(current_fps), int(current_bitrate//1000))
+                    except Exception:
+                        pass
+                    print('[CMD] HLS 항상 켜짐: 중지 요청 무시하고 유지')
                 elif cmd in ['start_recording', 'record_on']:
                     try:
                         if camera_frame is not None:
@@ -2537,15 +2545,7 @@ def camera_on(SCHEDULE_DURATION_SEC=None):
         except Exception:
             pass
         picam2.close()
-        # HLS 정지
-        try:
-            stop_hls_pipeline()
-        except Exception:
-            pass
-        try:
-            stop_hls_http_server()
-        except Exception:
-            pass
+        # HLS는 항상 켜짐: 세션 종료 시에도 유지
         if len(segment_infos) > 0:
             print(f'▶ 세션 종료: {len(segment_infos)}개 세그먼트 저장 완료, RTSP: rtsp://127.0.0.1:8554{rtsp_path}')
         else:
@@ -2613,6 +2613,18 @@ def main():
     LED_PIN.off()  # 시작 시 LED 꺼짐
     # 마지막 모드 로드 (재부팅 후에도 유지)
     load_last_mode_from_disk()
+
+    # 프로그램 시작 시 HLS 항상 켜기
+    try:
+        w, h = [int(v) for v in str(current_frame).split('x')]
+    except Exception:
+        w, h = 1280, 720
+    try:
+        start_hls_http_server()
+        start_hls_pipeline(int(w), int(h), int(current_fps), int(current_bitrate // 1000))
+        print('[BOOT] HLS 항상 켜짐: 서버/파이프라인 시작')
+    except Exception as e:
+        print(f"[BOOT] HLS 시작 실패(무시): {e}")
 
     # 모션 감지 모드일 경우, 프로그램 시작 시 즉시 카메라 세션 시작
     try:
