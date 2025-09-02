@@ -53,6 +53,9 @@ hls_dir = os.path.abspath(os.path.join(os.getcwd(), 'hls'))
 hls_httpd_server = None
 hls_httpd_thread = None
 hls_http_port = 8090
+hls_target_width = None
+hls_target_height = None
+hls_target_fps = None
 
 # --- MQTT 설정 ---
 MQTT_BROKER_HOST = os.getenv('MQTT_BROKER_HOST', '192.168.0.76')
@@ -419,7 +422,7 @@ def stop_hls_http_server():
     hls_httpd_thread = None
 
 def start_hls_pipeline(width: int, height: int, framerate: int):
-    global hls_pipeline, hls_appsrc
+    global hls_pipeline, hls_appsrc, hls_target_width, hls_target_height, hls_target_fps
     if not hls_enabled:
         return
     if hls_pipeline is not None:
@@ -427,6 +430,9 @@ def start_hls_pipeline(width: int, height: int, framerate: int):
     ensure_hls_dir()
     Gst.init(None)
     kbps = 2000
+    hls_target_width = int(width)
+    hls_target_height = int(height)
+    hls_target_fps = int(framerate)
     launch = (
         f"appsrc name=hls_src is-live=true format=time do-timestamp=true block=true "
         f"caps=video/x-raw,format=RGB,width={width},height={height},framerate={framerate}/1 ! "
@@ -943,12 +949,20 @@ def camera_stream():
                 # HLS 프레임 푸시 (RGB)
                 try:
                     if hls_appsrc is not None:
+                        # 파이프라인 캡스에 맞춰 리사이즈
+                        if hls_target_width and hls_target_height:
+                            if frame.shape[1] != hls_target_width or frame.shape[0] != hls_target_height:
+                                frame = cv2.resize(frame, (int(hls_target_width), int(hls_target_height)))
                         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         data = rgb.tobytes()
                         buf = Gst.Buffer.new_allocate(None, len(data), None)
                         buf.fill(0, data)
                         # 간단 duration만 설정 (타임스탬프는 omit)
-                        buf.duration = int(1e9/20)
+                        try:
+                            fps_val = int(hls_target_fps) if hls_target_fps else 20
+                        except Exception:
+                            fps_val = 20
+                        buf.duration = int(1e9/max(1, fps_val))
                         hls_appsrc.emit('push-buffer', buf)
                 except Exception:
                     pass
@@ -2125,6 +2139,13 @@ def main():
             start_hls_http_server()
             start_hls_pipeline(w, h, fps)
             print(f"[HLS] 자동 시작 완료: {w}x{h}@{fps}")
+            # 카메라 스레드 자동 시작
+            try:
+                t = threading.Thread(target=camera_stream, daemon=True)
+                t.start()
+                print("[HLS] 카메라 스레드 자동 시작")
+            except Exception as ce:
+                print(f"[HLS] 카메라 자동 시작 실패: {ce}")
     except Exception as e:
         print(f"[HLS] 자동 시작 실패: {e}")
 
