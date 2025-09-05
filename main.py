@@ -538,8 +538,9 @@ def send_pairing_request(endpoint_url):
         
         # 요청 데이터 준비
         request_data = {
-            "ip": client_ip,
-            "mac_address": mac_address
+            "deviceIp": client_ip,
+            "devicePort": 8087
+
         }
         
         # API 요청 보내기
