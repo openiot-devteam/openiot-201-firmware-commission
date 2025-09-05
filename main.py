@@ -503,7 +503,7 @@ def send_commission_request(server_info):
 
         response = requests.post(
             server_url,
-            json=request_data,
+            json=json.dumps(request_data),
             headers={'Content-Type': 'application/json'},
             timeout=10
         )
