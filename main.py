@@ -487,7 +487,7 @@ def send_commission_request(server_info):
         print(f"클라이언트 IP: {client_ip}")
         
         # 서버 URL 구성
-        server_url = f"http://{server_info['ip']}:{server_info['port']}/devices/device-pairing"
+        server_url = server_info['endpoint']
         
         # 요청 데이터 준비
         request_data = {
