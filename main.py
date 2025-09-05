@@ -496,8 +496,11 @@ def send_commission_request(server_info):
 
         }
         
+        print(f"요청 데이터: {request_data}")
+        
         # API 요청 보내기
         print(f"서버에 요청 보내는 중: {server_url}")
+
         response = requests.post(
             server_url,
             json=request_data,
