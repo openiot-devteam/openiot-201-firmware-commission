@@ -491,7 +491,9 @@ def send_commission_request(server_info):
         
         # 요청 데이터 준비
         request_data = {
-            "deviceIp": client_ip
+            "deviceIp": client_ip,
+            "devicePort": 8087
+
         }
         
         # API 요청 보내기
